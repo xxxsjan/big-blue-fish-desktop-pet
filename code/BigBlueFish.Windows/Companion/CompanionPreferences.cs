@@ -97,6 +97,8 @@ internal sealed class CompanionPreferences
     public double? Top { get; set; }
     /// <summary>本机回调地址。鱼鱼开口时 POST JSON；空字符串表示关闭。仅允许 http://127.0.0.1 或 localhost。</summary>
     public string SpeechWebhookUrl { get; set; } = "";
+    /// <summary>本机回调地址。鱼鱼切换动作时 POST JSON；空字符串表示关闭。仅允许 http://127.0.0.1 或 localhost。</summary>
+    public string ActionWebhookUrl { get; set; } = "";
 
     public static CompanionPreferences Read()
     {
@@ -132,18 +134,8 @@ internal sealed class CompanionPreferences
                     s.BubbleDurationIndex = Math.Clamp(s.BubbleDurationIndex, 0, BubbleDurations.Length - 1);
                     s.WeatherRegionCode = CompanionRegions.District(s.WeatherRegionCode).Code;
                     s.NormalizeLiveCaptureMode();
-                    s.SpeechWebhookUrl ??= "";
-                    if (s.SpeechWebhookUrl.Length > 0)
-                    {
-                        try
-                        {
-                            if (!Uri.TryCreate(s.SpeechWebhookUrl, UriKind.Absolute, out var uri)
-                                || uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps
-                                || uri.Host is not ("127.0.0.1" or "localhost"))
-                                s.SpeechWebhookUrl = "";
-                        }
-                        catch { s.SpeechWebhookUrl = ""; }
-                    }
+                    s.SpeechWebhookUrl = SanitizeWebhookUrl(s.SpeechWebhookUrl);
+                    s.ActionWebhookUrl = SanitizeWebhookUrl(s.ActionWebhookUrl);
                     return s;
                 }
             }
@@ -152,6 +144,21 @@ internal sealed class CompanionPreferences
             }
 
         return new();
+    }
+
+    private static string SanitizeWebhookUrl(string? url)
+    {
+        url ??= "";
+        if (url.Length == 0) return "";
+        try
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps
+                || uri.Host is not ("127.0.0.1" or "localhost"))
+                return "";
+        }
+        catch { return ""; }
+        return url;
     }
 
     public void Save()

@@ -76,6 +76,7 @@ public partial class MainWindow
         videoPlayer!.Play(Path.Combine(AnimationDirectory, rule.File), mirror, AnimationFinished,
             startSeconds: suspendedDrag ? 1.5 : 0, endSeconds: suspendedDrag ? 6 : null,
             playbackRate: rule.Pool == "Greeting" ? 1.5 : 1);
+        PublishActionWebhook(rule.Id, rule.Pool, phase, mirror);
     }
     private void PlayIdle()
     {

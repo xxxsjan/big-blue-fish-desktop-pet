@@ -15,9 +15,10 @@ namespace BigBlueFish.Windows;
 public partial class MainWindow
 {
     internal const int HttpApiPort = 19265;
-    private static readonly HttpClient SpeechWebhookClient = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private static readonly HttpClient CompanionWebhookClient = new() { Timeout = TimeSpan.FromSeconds(5) };
     private HttpListener? httpApi;
     private CancellationTokenSource? httpApiCancel;
+    private const string HttpApiRoutes = "GET /health、GET/POST /webhook、GET/POST /webhook/action、POST /say、POST /say/stream、POST /chat、POST /chat/stream";
 
     private void StartHttpApi()
     {
@@ -91,7 +92,8 @@ public partial class MainWindow
                     modelEnabled = preferences.ModelEnabled,
                     busy = brain.Busy || speechRequestPending,
                     status = brain.Status,
-                    webhookUrl = preferences.SpeechWebhookUrl
+                    webhookUrl = preferences.SpeechWebhookUrl,
+                    actionWebhookUrl = preferences.ActionWebhookUrl
                 }));
                 return;
             }
@@ -106,9 +108,19 @@ public partial class MainWindow
                 return;
             }
 
+            if (request.HttpMethod == "GET" && path == "/webhook/action")
+            {
+                await WriteHttpJson(response, 200, await Dispatcher.InvokeAsync(() => new
+                {
+                    ok = true,
+                    url = preferences.ActionWebhookUrl
+                }));
+                return;
+            }
+
             if (request.HttpMethod != "POST")
             {
-                await WriteHttpJson(response, 405, new { ok = false, error = "仅支持 GET /health、GET/POST /webhook、POST /say、POST /say/stream、POST /chat、POST /chat/stream。" });
+                await WriteHttpJson(response, 405, new { ok = false, error = "仅支持 " + HttpApiRoutes + "。" });
                 return;
             }
 
@@ -121,18 +133,22 @@ public partial class MainWindow
 
             if (path == "/webhook")
             {
-                string url = "";
-                if (root.TryGetProperty("url", out var urlNode))
-                {
-                    if (urlNode.ValueKind == JsonValueKind.Null) url = "";
-                    else if (urlNode.ValueKind == JsonValueKind.String) url = urlNode.GetString() ?? "";
-                    else throw new ArgumentException("url 必须是字符串或 null。");
-                }
-                url = url.Trim();
-                if (url.Length > 0) ValidateSpeechWebhookUrl(url);
+                var url = ReadWebhookUrl(root);
                 await Dispatcher.InvokeAsync(() =>
                 {
                     preferences.SpeechWebhookUrl = url;
+                    SaveCompanion();
+                });
+                await WriteHttpJson(response, 200, new { ok = true, url });
+                return;
+            }
+
+            if (path == "/webhook/action")
+            {
+                var url = ReadWebhookUrl(root);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    preferences.ActionWebhookUrl = url;
                     SaveCompanion();
                 });
                 await WriteHttpJson(response, 200, new { ok = true, url });
@@ -183,7 +199,7 @@ public partial class MainWindow
                 return;
             }
 
-            await WriteHttpJson(response, 404, new { ok = false, error = "未知路径。可用：GET /health、GET/POST /webhook、POST /say、POST /say/stream、POST /chat、POST /chat/stream。" });
+            await WriteHttpJson(response, 404, new { ok = false, error = "未知路径。可用：" + HttpApiRoutes + "。" });
         }
         catch (ArgumentException e)
         {
@@ -353,37 +369,70 @@ public partial class MainWindow
 
     private void PublishSpeechWebhook(string text, string source)
     {
-        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(preferences.SpeechWebhookUrl)) return;
-        var url = preferences.SpeechWebhookUrl.Trim();
-        try { ValidateSpeechWebhookUrl(url); }
-        catch { return; }
-
-        var payload = JsonSerializer.Serialize(new
+        if (string.IsNullOrWhiteSpace(text)) return;
+        PostCompanionWebhook(preferences.SpeechWebhookUrl, "Speech webhook", new
         {
             text,
             source,
             at = DateTimeOffset.Now
         });
+    }
+
+    private void PublishActionWebhook(string action, string pool, string phase, bool mirror)
+    {
+        if (string.IsNullOrWhiteSpace(action)) return;
+        PostCompanionWebhook(preferences.ActionWebhookUrl, "Action webhook", new
+        {
+            action,
+            pool,
+            phase,
+            mirror,
+            at = DateTimeOffset.Now
+        });
+    }
+
+    private static void PostCompanionWebhook(string? configuredUrl, string label, object payloadObject)
+    {
+        if (string.IsNullOrWhiteSpace(configuredUrl)) return;
+        var url = configuredUrl.Trim();
+        try { ValidateWebhookUrl(url); }
+        catch { return; }
+
+        var payload = JsonSerializer.Serialize(payloadObject);
         _ = Task.Run(async () =>
         {
             try
             {
                 using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                using var response = await SpeechWebhookClient.PostAsync(url, content);
+                using var response = await CompanionWebhookClient.PostAsync(url, content);
             }
             catch (Exception e)
             {
                 try
                 {
                     File.AppendAllText(Path.Combine(Environment.CurrentDirectory, "companion-errors.log"),
-                        DateTime.Now + " Speech webhook 失败：" + e.Message + Environment.NewLine);
+                        DateTime.Now + " " + label + " 失败：" + e.Message + Environment.NewLine);
                 }
                 catch { }
             }
         });
     }
 
-    private static void ValidateSpeechWebhookUrl(string url)
+    private static string ReadWebhookUrl(JsonElement root)
+    {
+        string url = "";
+        if (root.TryGetProperty("url", out var urlNode))
+        {
+            if (urlNode.ValueKind == JsonValueKind.Null) url = "";
+            else if (urlNode.ValueKind == JsonValueKind.String) url = urlNode.GetString() ?? "";
+            else throw new ArgumentException("url 必须是字符串或 null。");
+        }
+        url = url.Trim();
+        if (url.Length > 0) ValidateWebhookUrl(url);
+        return url;
+    }
+
+    private static void ValidateWebhookUrl(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
             || uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps

@@ -38,7 +38,8 @@ GET http://127.0.0.1:19265/health
   "modelEnabled": true,
   "busy": false,
   "status": "本地模型就绪",
-  "webhookUrl": "http://127.0.0.1:3000/big-blue-speech"
+  "webhookUrl": "http://127.0.0.1:3000/big-blue-speech",
+  "actionWebhookUrl": "http://127.0.0.1:3000/big-blue-action"
 }
 ```
 
@@ -49,6 +50,7 @@ GET http://127.0.0.1:19265/health
 | `busy` | 当前是否正在推理或吐字占用中 |
 | `status` | 模型侧状态文案 |
 | `webhookUrl` | 当前配置的吐字回调地址；未配置时为空字符串 |
+| `actionWebhookUrl` | 当前配置的动作回调地址；未配置时为空字符串 |
 
 ---
 
@@ -141,6 +143,101 @@ await fetch('http://127.0.0.1:19265/webhook', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ url: 'http://127.0.0.1:3000/big-blue-speech' }),
+});
+```
+
+---
+
+## Action Webhook（桌宠 → 你的程序）
+
+鱼鱼**开始播放任一动作**时（待机轮换、点击回应、定时事件、拖动、启动/退出、MCP `play_action` 等），会向你配置的本机 URL 发一次 `POST`。与吐字 webhook 分开配置，互不影响。
+
+### 配置回调
+
+```http
+POST http://127.0.0.1:19265/webhook/action
+Content-Type: application/json
+
+{
+  "url": "http://127.0.0.1:3000/big-blue-action"
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `url` | 本机回调地址；仅允许 `http(s)://127.0.0.1` 或 `localhost`。传 `""` 或 `null` 关闭 |
+
+查询当前配置：
+
+```http
+GET http://127.0.0.1:19265/webhook/action
+```
+
+配置会写入桌宠的 `preferences.json`，下次启动仍有效。
+
+### 桌宠推给你的正文
+
+```http
+POST http://127.0.0.1:3000/big-blue-action
+Content-Type: application/json
+
+{
+  "action": "待机呼吸休闲",
+  "pool": "Idle",
+  "phase": "Idle",
+  "mirror": false,
+  "at": "2026-10-31T21:05:00.123+08:00"
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `action` | 动作精确名称（与 MCP `list_actions` 一致） |
+| `pool` | 动作池：`Idle` / `Event` / `Click` / `Greeting` / `Daily` / `Drag` / `Disabled` 等 |
+| `phase` | 本次播放阶段，见下表 |
+| `mirror` | 是否水平镜像（移动去程/返程时常见） |
+| `at` | 推送时间（带时区） |
+
+| `phase` | 含义 |
+| --- | --- |
+| `Startup` | 启动行礼 |
+| `Idle` / `PuppetIdle` | 待机 / 提线木偶固定待机 |
+| `Event` | 普通定时事件 |
+| `Click` | 点击回应 |
+| `Drag` | 拖动悬空 |
+| `Daily` | 每日固定事件（如刷牙） |
+| `Outbound` / `BetweenMoves` / `Return` | 移动去程、中途待机、返程 |
+| `External` | MCP / 外部排队动作 |
+| `Exit` | 退出告别 |
+| `Preview` | 预览播放 |
+
+待机片段约每十几秒就会换一次，事件频率取决于设置里的动作间隔。Webhook 同样异步、约 5 秒超时；失败不打断动画，可能记入 `companion-errors.log`。
+
+### Node.js 接收示例
+
+```js
+import http from 'http';
+
+http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/big-blue-action') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const { action, pool, phase, mirror, at } = JSON.parse(body);
+      console.log(`[${phase}/${pool}]`, action, mirror, at);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+}).listen(3000, '127.0.0.1');
+
+await fetch('http://127.0.0.1:19265/webhook/action', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ url: 'http://127.0.0.1:3000/big-blue-action' }),
 });
 ```
 
@@ -346,10 +443,11 @@ async function chatStream(text, user) {
 
 1. 启动桌宠后，先 `GET /health`；`ok === true` 再发业务请求。
 2. 若要同步鱼鱼自己说的话，先在本机起好接收服务，再 `POST /webhook` 注册回调。
-3. **只播弹幕原文** → `POST /say`；要边吐字边收 → `POST /say/stream`。
-4. **本地模型回一句** → `POST /chat`；要边生成边收 → `POST /chat/stream`。
-5. 弹幕很密时建议限流或排队；新的 `/say`、`/chat` 及其 stream 会取消当前本地生成。
-6. 仅本机可访问，弹幕客户端与桌宠需在同一台电脑。
+3. 若要同步动作切换，另起接收服务后 `POST /webhook/action` 注册回调（与吐字分开）。
+4. **只播弹幕原文** → `POST /say`；要边吐字边收 → `POST /say/stream`。
+5. **本地模型回一句** → `POST /chat`；要边生成边收 → `POST /chat/stream`。
+6. 弹幕很密时建议限流或排队；新的 `/say`、`/chat` 及其 stream 会取消当前本地生成。
+7. 仅本机可访问，弹幕客户端与桌宠需在同一台电脑。
 
 ### Node.js 示例
 
@@ -363,6 +461,15 @@ async function health() {
 
 async function setWebhook(url) {
   const res = await fetch(`${BASE}/webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  return res.json();
+}
+
+async function setActionWebhook(url) {
+  const res = await fetch(`${BASE}/webhook/action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
@@ -389,6 +496,7 @@ async function chat(text, user) {
 }
 
 await setWebhook('http://127.0.0.1:3000/big-blue-speech');
+await setActionWebhook('http://127.0.0.1:3000/big-blue-action');
 await chat(danmakuText, nick);
 ```
 
@@ -400,6 +508,10 @@ curl http://127.0.0.1:19265/health
 curl -X POST http://127.0.0.1:19265/webhook ^
   -H "Content-Type: application/json" ^
   -d "{\"url\":\"http://127.0.0.1:3000/big-blue-speech\"}"
+
+curl -X POST http://127.0.0.1:19265/webhook/action ^
+  -H "Content-Type: application/json" ^
+  -d "{\"url\":\"http://127.0.0.1:3000/big-blue-action\"}"
 
 curl -X POST http://127.0.0.1:19265/say ^
   -H "Content-Type: application/json" ^
