@@ -42,6 +42,8 @@ public sealed class AgentCoordinator : IDisposable
     public bool Busy { get; private set; }
     public bool AwaitingSpeech => Busy && Interlocked.Read(ref spoken) == Interlocked.Read(ref turnStartSpoken);
     public void MarkSpoken() => Interlocked.Increment(ref spoken);
+    /// <summary>当前 ACP 轮次事件种类；无进行中的轮次时为空。用于宿主把 say 映射到正确的吐字 webhook source。</summary>
+    public string ActiveKind => activeKind;
     public string Status => status;
     public string Detail => detail;
     public string HarnessId => harnessId;

@@ -106,13 +106,15 @@ Content-Type: application/json
 
 | `source` | 含义 |
 | --- | --- |
-| `auto` | 日常自动吐字 |
-| `weather` | 天气播报 |
-| `test` | 右键「吐字测试」 |
-| `say` | Agent / MCP 的 `say`（HTTP `/say` 不走 webhook） |
-| `local` | Agent 触发的本地吐字 |
+| `auto` | 日常自动吐字（含 Agent 编写的日常关心 / 预约唤醒） |
+| `weather` | 天气播报（本地模型或 Agent 经 `weather_request` 编写） |
+| `test` | 右键「吐字测试」（本地模型或 Agent 经 `speech_test` 编写） |
+| `say` | 仅旧版兼容；当前 HTTP `/say` **不**走 webhook，Agent MCP `say` 也不再标此值 |
+| `local` | Agent 触发的本地模型吐字（`request_local_speech`） |
 | `greeting` | 启动请安等问候 |
-| `speech` | 其他气泡显示 |
+| `speech` | Agent 对话等其他 MCP 开口，以及其他气泡显示 |
+
+开启「把日常关心的吐字交给 Agent」后，右键天气 / 吐字测试仍会推 webhook，`source` 分别为 `weather` / `test`（不是 `say`）。接收端若把 `say`、`chat` 当作「面板 HTTP 已处理」而丢弃，请继续按上表过滤。
 
 Webhook 为异步、最多约 5 秒超时；你的服务失败不会打断鱼鱼说话。失败可能记入 `companion-errors.log`。
 

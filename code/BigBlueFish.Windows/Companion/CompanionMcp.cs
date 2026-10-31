@@ -139,8 +139,18 @@ public partial class MainWindow
         bubbleIsModelReply = false;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, true);
-        PublishSpeechWebhook(text, "say");
+        // 不用 "say"：弹幕机等接收端会把 say/chat 当作面板 HTTP 已本地处理的来源而丢弃。
+        // Agent 经 MCP 的开口需要按触发事件给出可消费的 source。
+        PublishSpeechWebhook(text, SpeechWebhookSourceForAgent(agent?.ActiveKind));
     }
+    private static string SpeechWebhookSourceForAgent(string? kind) => kind switch
+    {
+        "weather_request" => "weather",
+        "speech_test" => "test",
+        "daily_care" or "wakeup" or "start_care" => "auto",
+        "user_message" => "speech",
+        _ => "speech"
+    };
     private bool ConsumeMcpSpeech()
     {
         if (mcpNextSpeech == null) return false;
