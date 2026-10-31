@@ -26,6 +26,8 @@ public partial class MainWindow
     private bool bubbleIsModelReply;
     private long speechRequestVersion;
     private Grid companionLayout = null !;
+    private Grid spriteLayer = null!;
+    private Canvas bubbleLayer = null!;
     private Window? companionSettings;
     private ContextMenu companionContextMenu = null!;
     private CompanionMenuDismissal? companionMenuDismissal;
@@ -87,6 +89,8 @@ public partial class MainWindow
     internal TextBlock CompanionBubbleText => bubbleText;
     internal double CompanionBubbleScale => preferences.BubbleScale;
     internal string CompanionBubbleLayoutText => speech?.FullText ?? bubbleText.Text;
+    internal Grid CompanionSpriteLayer => spriteLayer;
+    internal Canvas CompanionBubbleLayer => bubbleLayer;
 
     private void InitializeCompanion()
     {
@@ -109,19 +113,35 @@ public partial class MainWindow
         };
         InitializeComponent();
         System.Windows.Shell.WindowChrome.SetWindowChrome(this, null);
+        // Always layered so the desktop shows through empty pixels. Capture mode only changes
+        // taskbar / TOOLWINDOW so OBS can enumerate the window.
         AllowsTransparency = true;
         Background = null;
         WindowStyle = WindowStyle.None;
         ShowActivated = false;
-        ShowInTaskbar = false;
+        ShowInTaskbar = LiveCaptureListed;
         Topmost = true;
         Title = "蓝色大肥鱼";
         ResizeMode = ResizeMode.NoResize;
         SizeToContent = SizeToContent.Manual;
-        companionLayout = new Grid
+        // Two layers: sprite stays bottom-docked at fixed size; bubble overlays on a Canvas above it
+        // so growing text never participates in the sprite's layout.
+        companionLayout = new Grid { Background = null };
+        spriteLayer = new Grid
         {
-            Background = null
+            Background = null,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Bottom
         };
+        bubbleLayer = new Canvas
+        {
+            Background = null,
+            IsHitTestVisible = true
+        };
+        Panel.SetZIndex(spriteLayer, 0);
+        Panel.SetZIndex(bubbleLayer, 10);
+        companionLayout.Children.Add(spriteLayer);
+        companionLayout.Children.Add(bubbleLayer);
         bubbleText = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap,
@@ -168,12 +188,12 @@ public partial class MainWindow
         bubble = new CompanionBubble
         {
             VerticalAlignment = VerticalAlignment.Top,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
             MaxWidth = 300,
             Visibility = Visibility.Collapsed,
             Child = bubbleContent
         };
-        companionLayout.Children.Add(bubble);
+        bubbleLayer.Children.Add(bubble);
         ApplyCompanionBubbleScale(false);
         loadingSpinner = new CompanionLoadingRing
         {
@@ -199,10 +219,14 @@ public partial class MainWindow
             Child = loadingSpinner
         };
         Panel.SetZIndex(loadingIndicator, 20);
-        companionLayout.Children.Add(loadingIndicator);
+        spriteLayer.Children.Add(loadingIndicator);
         speech = new CompanionSpeech(bubbleText, bubble, () => CompanionEdgeLayout.Refresh(this), ResetBubbleDeadline);
         Content = companionLayout;
         ApplyCompanionScale(false);
+        // Capture mode uses a taller fixed frame; size it before applying Left/Top so a saved
+        // corner position keeps the sprite inside the work area instead of below the screen.
+        if (LiveCaptureListed)
+            CompanionEdgeLayout.ApplyCaptureMode(this);
         var a = SystemParameters.WorkArea;
         Left = preferences.Left ?? (a.Right - Width - 12);
         Top = preferences.Top ?? (a.Bottom - Height + 15);
@@ -270,8 +294,41 @@ public partial class MainWindow
         if (h == IntPtr.Zero)
             return;
         hookInstalled = true;
-        CompanionNative.SetStyle(h, -20, new IntPtr(CompanionNative.GetStyle(h, -20).ToInt64() | 0x08000000L | 0x80L));
+        ApplyLiveCaptureWindowStyle();
         HwndSource.FromHwnd(h)?.AddHook(CompanionWndProc);
+    }
+
+    internal bool LiveCaptureListed => preferences.LiveCaptureMode != CompanionPreferences.LiveCaptureOff;
+
+    internal void ApplyLiveCaptureWindowStyle()
+    {
+        var h = new WindowInteropHelper(this).Handle;
+        if (h == IntPtr.Zero)
+            return;
+        // WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x80.
+        // Capture mode drops TOOLWINDOW and shows a taskbar entry so OBS can list the window.
+        long style = CompanionNative.GetStyle(h, -20).ToInt64();
+        if (LiveCaptureListed)
+        {
+            ShowInTaskbar = true;
+            Title = "蓝色大肥鱼";
+            style = (style | 0x08000000L) & ~0x80L;
+        }
+        else
+        {
+            ShowInTaskbar = false;
+            style |= 0x08000000L | 0x80L;
+        }
+
+        CompanionNative.SetStyle(h, -20, new IntPtr(style));
+        CompanionEdgeLayout.ApplyCaptureMode(this);
+    }
+
+    internal void SetLiveCaptureMode(int mode)
+    {
+        preferences.LiveCaptureMode = Math.Clamp(mode, CompanionPreferences.LiveCaptureOff, CompanionPreferences.LiveCaptureTransparent);
+        preferences.LiveCaptureCompatible = preferences.LiveCaptureMode == CompanionPreferences.LiveCaptureTransparent;
+        ApplyLiveCaptureWindowStyle();
     }
 
     private IntPtr CompanionWndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)
@@ -329,13 +386,20 @@ public partial class MainWindow
 
     private void ApplyCompanionScale(bool save = true)
     {
-        Width = SpriteSize * 640 / 360 + 20;
-        Height = SpriteSize + 35;
+        double baseWidth = SpriteSize * 640 / 360 + 20;
+        double baseHeight = SpriteSize + 35;
+        spriteLayer.Width = baseWidth;
+        spriteLayer.Height = baseHeight;
+        // Always apply the sprite base size first. Capture mode expands afterward via Refresh/Clamp
+        // once Left/Top are known, so the character foot stays inside the work area.
+        Width = baseWidth;
+        Height = baseHeight;
         if (videoImage != null) { videoImage.Width = SpriteSize * 640 / 360; videoImage.Height = SpriteSize; }
         PositionLoadingIndicator();
 
         if (save)
         {
+            CompanionEdgeLayout.Refresh(this);
             ClampCompanion();
             anchor = new Point(Left, Top);
             SaveCompanion();
@@ -344,13 +408,12 @@ public partial class MainWindow
 
     private void PositionLoadingIndicator()
     {
-        if (loadingIndicator == null || preferences == null)
+        if (loadingIndicator == null || preferences == null || spriteLayer == null)
             return;
-        // The idle sprite's visible head is around the upper middle of the
-        // transparent sprite. Keep the indicator just above its right side.
+        // Coordinates are inside the bottom sprite layer, not the full (possibly taller) window.
         loadingIndicator.Margin = new Thickness(
-            Math.Max(0, (Width - SpriteSize * 640 / 360) / 2 + SpriteSize * 412 / 360),
-            Math.Max(0, Height - SpriteSize + SpriteSize * 50 / 360),
+            Math.Max(0, (spriteLayer.Width - SpriteSize * 640 / 360) / 2 + SpriteSize * 412 / 360),
+            Math.Max(0, spriteLayer.Height - SpriteSize + SpriteSize * 50 / 360),
             0,
             0);
     }
@@ -592,12 +655,10 @@ public partial class MainWindow
                         nextSpeech = now;
                         break;
                     case "inspectable":
-                        ShowInTaskbar = true;
-                        CompanionNative.SetStyle(hwnd, -20, new IntPtr(CompanionNative.GetStyle(hwnd, -20).ToInt64() & ~0x80L));
+                        SetLiveCaptureMode(CompanionPreferences.LiveCaptureTransparent);
                         break;
                     case "normal-style":
-                        ShowInTaskbar = false;
-                        CompanionNative.SetStyle(hwnd, -20, new IntPtr(CompanionNative.GetStyle(hwnd, -20).ToInt64() | 0x08000000L | 0x80L));
+                        SetLiveCaptureMode(CompanionPreferences.LiveCaptureOff);
                         break;
                     case "model-off":
                         preferences.ModelEnabled = false;

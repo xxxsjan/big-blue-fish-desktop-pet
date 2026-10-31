@@ -12,6 +12,23 @@ internal sealed class CompanionPreferences
     public bool ForegroundEnabled { get; set; } = true;
     public bool StopModelOnBattery { get; set; } = true;
     public bool HideOnFullscreen { get; set; } = true;
+    /// <summary>
+    /// 0 = normal transparent pet; 1 = keep transparency but expose a normal top-level window for OBS WGC.
+    /// Older builds used 1 = chroma and 2 = transparent; both non-zero values migrate to transparent.
+    /// </summary>
+    public int LiveCaptureMode { get; set; }
+    /// <summary>Legacy: old chroma/capture toggle. Migrated into LiveCaptureMode on read.</summary>
+    public bool LiveCaptureCompatible { get; set; }
+    internal const int LiveCaptureOff = 0;
+    internal const int LiveCaptureTransparent = 1;
+    internal void NormalizeLiveCaptureMode()
+    {
+        // Old chroma (1) and old transparent (2), or legacy bool, all become transparent capture.
+        if (LiveCaptureCompatible || LiveCaptureMode != LiveCaptureOff)
+            LiveCaptureMode = LiveCaptureTransparent;
+        LiveCaptureMode = Math.Clamp(LiveCaptureMode, LiveCaptureOff, LiveCaptureTransparent);
+        LiveCaptureCompatible = LiveCaptureMode == LiveCaptureTransparent;
+    }
     public bool CheckUpdatesOnStartup { get; set; } = true;
     public bool AgentEnabled { get; set; }
     public string AgentHarnessId { get; set; } = "codex";
@@ -112,6 +129,7 @@ internal sealed class CompanionPreferences
                     s.SpeechMinMinutes = NormalizeSpeechMinimum(s.SpeechMinMinutes);
                     s.BubbleDurationIndex = Math.Clamp(s.BubbleDurationIndex, 0, BubbleDurations.Length - 1);
                     s.WeatherRegionCode = CompanionRegions.District(s.WeatherRegionCode).Code;
+                    s.NormalizeLiveCaptureMode();
                     return s;
                 }
             }

@@ -48,7 +48,7 @@ public partial class MainWindow
         videoImage = new CompanionSpriteImage { Width = SpriteSize * 640 / 360, Height = SpriteSize,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
             Stretch = Stretch.Fill };
-        companionLayout.Children.Insert(0, videoImage);
+        spriteLayer.Children.Insert(0, videoImage);
         videoPlayer = new(videoImage);
         videoPlayer.Failed += error =>
         {

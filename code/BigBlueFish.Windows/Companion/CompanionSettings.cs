@@ -147,6 +147,18 @@ public partial class MainWindow
             preferences.HideOnFullscreen = v;
             UpdateCompanionVisibility();
         });
+        Toggle("透明窗口捕获", preferences.LiveCaptureMode == CompanionPreferences.LiveCaptureTransparent, v =>
+        {
+            SetLiveCaptureMode(v ? CompanionPreferences.LiveCaptureTransparent : CompanionPreferences.LiveCaptureOff);
+        });
+        p.Children.Add(new TextBlock
+        {
+            Text = "关闭为普通模式；开启为透明窗口捕获（进任务栏，OBS 可枚举）。请用窗口捕获 → Windows 10，勾选「允许透明度」。",
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.72,
+            Margin = new Thickness(0, 0, 0, 8),
+            FontSize = 12
+        });
         Toggle("开机自动启动", StartupEnabled(), SetCompanionStartup);
         Toggle("启动时检查更新", preferences.CheckUpdatesOnStartup, v => preferences.CheckUpdatesOnStartup = v);
         p = pages[1];
