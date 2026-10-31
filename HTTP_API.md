@@ -1,4 +1,4 @@
-# 蓝色大肥鱼 · 本机 HTTP API
+﻿# 蓝色大肥鱼 · 本机 HTTP API
 
 给弹幕机、桌面端等本地程序调用。桌宠启动后自动在本机开启，**不依赖「连接 Agent」**，也不需要额外开关。
 
@@ -38,7 +38,7 @@ GET http://127.0.0.1:19265/health
   "modelEnabled": true,
   "busy": false,
   "status": "本地模型就绪",
-  "webhookUrl": "http://127.0.0.1:3000/fish-speech"
+  "webhookUrl": "http://127.0.0.1:3000/big-blue-speech"
 }
 ```
 
@@ -65,7 +65,7 @@ POST http://127.0.0.1:19265/webhook
 Content-Type: application/json
 
 {
-  "url": "http://127.0.0.1:3000/fish-speech"
+  "url": "http://127.0.0.1:3000/big-blue-speech"
 }
 ```
 
@@ -84,7 +84,7 @@ GET http://127.0.0.1:19265/webhook
 ### 桌宠推给你的正文
 
 ```http
-POST http://127.0.0.1:3000/fish-speech
+POST http://127.0.0.1:3000/big-blue-speech
 Content-Type: application/json
 
 {
@@ -119,7 +119,7 @@ Webhook 为异步、最多约 5 秒超时；你的服务失败不会打断鱼鱼
 import http from 'http';
 
 http.createServer((req, res) => {
-  if (req.method === 'POST' && req.url === '/fish-speech') {
+  if (req.method === 'POST' && req.url === '/big-blue-speech') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
@@ -139,7 +139,7 @@ http.createServer((req, res) => {
 await fetch('http://127.0.0.1:19265/webhook', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ url: 'http://127.0.0.1:3000/fish-speech' }),
+  body: JSON.stringify({ url: 'http://127.0.0.1:3000/big-blue-speech' }),
 });
 ```
 
@@ -294,7 +294,7 @@ async function chat(text, user) {
   return res.json();
 }
 
-await setWebhook('http://127.0.0.1:3000/fish-speech');
+await setWebhook('http://127.0.0.1:3000/big-blue-speech');
 await chat(danmakuText, nick);
 ```
 
@@ -305,7 +305,7 @@ curl http://127.0.0.1:19265/health
 
 curl -X POST http://127.0.0.1:19265/webhook ^
   -H "Content-Type: application/json" ^
-  -d "{\"url\":\"http://127.0.0.1:3000/fish-speech\"}"
+  -d "{\"url\":\"http://127.0.0.1:3000/big-blue-speech\"}"
 
 curl -X POST http://127.0.0.1:19265/say ^
   -H "Content-Type: application/json" ^
