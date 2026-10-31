@@ -187,6 +187,44 @@ Content-Type: application/json
 
 ---
 
+## POST `/say/stream`
+
+与 `/say` 相同，但响应为 **SSE 流式吐字**（约 28 字/秒，与气泡动画同步）。`Content-Type: text/event-stream`。
+
+### 事件
+
+| event | 含义 |
+| --- | --- |
+| `start` | 开始，`text` 为完整原文 |
+| `partial` | 当前已显示到的前缀（累计文本） |
+| `done` | 吐字结束，`text` / `reply` 为完整原文 |
+| `error` | 失败 |
+
+```http
+POST http://127.0.0.1:19265/say/stream
+Content-Type: application/json
+
+{"text":"大家好呀～"}
+```
+
+示例片段：
+
+```
+event: start
+data: {"ok":true,"text":"大家好呀～","source":"say"}
+
+event: partial
+data: {"text":"大","source":"say"}
+
+event: partial
+data: {"text":"大家","source":"say"}
+
+event: done
+data: {"ok":true,"text":"大家好呀～","reply":"大家好呀～","source":"say"}
+```
+
+---
+
 ## POST `/chat`
 
 把弹幕交给**本地 GGUF**，由鱼鱼生成一句回复并显示在气泡里。算力走本机（含 GPU，按桌宠供电/GPU 设置）。
@@ -248,13 +286,68 @@ Content-Type: application/json
 
 ---
 
+## POST `/chat/stream`
+
+与 `/chat` 相同（本地模型生成），但响应为 **SSE**：模型边生成边推 `partial`（累计文本），最后 `done` 给整句。气泡同步流式显示。
+
+### 事件
+
+| event | 含义 |
+| --- | --- |
+| `start` | 已接受请求 |
+| `partial` | 当前已生成的累计回复 |
+| `done` | 完成，含完整 `reply` |
+| `error` | 失败（模型不可用等） |
+
+```http
+POST http://127.0.0.1:19265/chat/stream
+Content-Type: application/json
+
+{"text":"鱼鱼你好","user":"观众昵称"}
+```
+
+### Node.js 读取示例
+
+```js
+async function chatStream(text, user) {
+  const res = await fetch('http://127.0.0.1:19265/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, user }),
+  });
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop() ?? '';
+    for (const part of parts) {
+      const ev = part.match(/^event: (.+)$/m)?.[1];
+      const data = part.match(/^data: (.+)$/m)?.[1];
+      if (!ev || !data) continue;
+      const json = JSON.parse(data);
+      if (ev === 'partial') process.stdout.write('\r' + json.text);
+      if (ev === 'done') console.log('\n完成:', json.reply);
+      if (ev === 'error') throw new Error(json.error);
+    }
+  }
+}
+```
+
+说明：Webhook 仍只在整句定稿后推一次；流式请用上述 SSE 接口。
+
+---
+
 ## 弹幕机对接建议
 
 1. 启动桌宠后，先 `GET /health`；`ok === true` 再发业务请求。
 2. 若要同步鱼鱼自己说的话，先在本机起好接收服务，再 `POST /webhook` 注册回调。
-3. **只播弹幕原文** → `POST /say`。
-4. **要鱼鱼用本地模型回一句** → `POST /chat`（需 `modelAvailable` 且 `modelEnabled` 为 true）。
-5. 弹幕很密时建议限流或排队，避免连续 `/chat` 互相打断；新的 `/say` 或 `/chat` 会取消当前正在进行的本地生成。
+3. **只播弹幕原文** → `POST /say`；要边吐字边收 → `POST /say/stream`。
+4. **本地模型回一句** → `POST /chat`；要边生成边收 → `POST /chat/stream`。
+5. 弹幕很密时建议限流或排队；新的 `/say`、`/chat` 及其 stream 会取消当前本地生成。
 6. 仅本机可访问，弹幕客户端与桌宠需在同一台电脑。
 
 ### Node.js 示例

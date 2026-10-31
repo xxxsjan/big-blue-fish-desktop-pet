@@ -38,6 +38,38 @@ async function bigBlue(path, { method = 'GET', body } = {}) {
   return { status: res.status, json };
 }
 
+async function bigBlueStream(path, body, onEvent) {
+  const res = await fetch(`${BIG_BLUE_API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok && !res.headers.get('content-type')?.includes('text/event-stream')) {
+    const text = await res.text();
+    throw new Error(`${path} HTTP ${res.status}: ${text}`);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const events = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop() ?? '';
+    for (const part of parts) {
+      const ev = part.match(/^event: (.+)$/m)?.[1];
+      const data = part.match(/^data: (.+)$/m)?.[1];
+      if (!ev || !data) continue;
+      const json = JSON.parse(data);
+      events.push({ event: ev, data: json });
+      onEvent?.(ev, json);
+    }
+  }
+  return events;
+}
+
 function startWebhookServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
@@ -87,55 +119,87 @@ async function main() {
   const server = await startWebhookServer();
 
   try {
-    log('1/5 health');
+    log('1/6 health');
     const health = await bigBlue('/health');
     console.log(JSON.stringify(health.json, null, 2));
     if (health.status !== 200 || !health.json.ok) {
       throw new Error('桌宠 /health 不可用，请先启动蓝色大肥鱼');
     }
 
-    log('2/5 注册 webhook');
+    log('2/6 注册 webhook');
     const hook = await bigBlue('/webhook', { method: 'POST', body: { url: WEBHOOK_URL } });
     console.log(JSON.stringify(hook.json, null, 2));
     if (hook.status !== 200 || !hook.json.ok) {
       throw new Error('注册 webhook 失败：' + (hook.json.error || hook.status));
     }
 
-    log('3/5 POST /say');
+    log('3/6 POST /say/stream');
     const sayText = `联调说一句 ${new Date().toLocaleTimeString()}`;
-    const say = await bigBlue('/say', { method: 'POST', body: { text: sayText } });
-    console.log(JSON.stringify(say.json, null, 2));
-    if (say.status !== 200 || !say.json.ok) {
-      throw new Error('/say 失败：' + (say.json.error || say.status));
-    }
+    let lastPartial = '';
+    const sayEvents = await bigBlueStream('/say/stream', { text: sayText }, (ev, json) => {
+      if (ev === 'partial') {
+        lastPartial = json.text;
+        process.stdout.write(`\r  吐字: ${json.text}`);
+      }
+      if (ev === 'done') process.stdout.write('\n');
+      if (ev === 'error') throw new Error(json.error || 'say/stream error');
+    });
+    if (!sayEvents.some(e => e.event === 'done')) throw new Error('/say/stream 未收到 done');
+    if (lastPartial !== sayText) throw new Error('/say/stream 最终 partial 与原文不一致');
+    log('say/stream', 'OK');
     const sayHook = await waitForWebhook(p => p.source === 'say' && p.text === sayText);
-    if (!sayHook) throw new Error('超时：未收到 /say 对应的 webhook');
+    if (!sayHook) throw new Error('超时：未收到 /say/stream 对应的 webhook');
     log('收到 say webhook', 'OK');
 
     if (SKIP_CHAT) {
-      log('4/5 /chat', '已跳过（SKIP_CHAT=1）');
+      log('4/6 /chat/stream', '已跳过（SKIP_CHAT=1）');
     } else {
-      log('4/5 POST /chat', '会走本地模型，可能要几十秒');
-      const chat = await bigBlue('/chat', {
-        method: 'POST',
-        body: { text: '鱼鱼你好，这是联调测试', user: '联调脚本' },
-      });
-      console.log(JSON.stringify(chat.json, null, 2));
-      if (chat.status === 503) {
-        log('警告', '/chat 返回 503（模型未就绪或忙碌），跳过 webhook 校验');
-      } else if (chat.status !== 200 || !chat.json.ok) {
-        throw new Error('/chat 失败：' + (chat.json.error || chat.status));
+      log('4/6 POST /chat/stream', '会走本地模型，可能要几十秒');
+      let reply = '';
+      const chatEvents = await bigBlueStream(
+        '/chat/stream',
+        { text: '鱼鱼你好，这是联调测试', user: '联调脚本' },
+        (ev, json) => {
+          if (ev === 'partial') {
+            process.stdout.write(`\r  生成: ${json.text}`);
+          }
+          if (ev === 'done') {
+            process.stdout.write('\n');
+            reply = json.reply || '';
+          }
+          if (ev === 'error') {
+            process.stdout.write('\n');
+            log('警告', '/chat/stream error: ' + (json.error || ''));
+          }
+        }
+      );
+      if (chatEvents.some(e => e.event === 'error') && !reply) {
+        log('警告', '/chat/stream 失败（模型未就绪？），跳过 webhook 校验');
+      } else if (!reply) {
+        throw new Error('/chat/stream 未收到 done/reply');
       } else {
+        log('chat/stream reply', reply);
         const chatHook = await waitForWebhook(
-          p => p.source === 'chat' && p.text === chat.json.reply,
-          120000
+          p => p.source === 'chat' && p.text === reply,
+          15000
         );
-        if (!chatHook) throw new Error('超时：未收到 /chat 对应的 webhook');
+        if (!chatHook) throw new Error('超时：未收到 /chat/stream 对应的 webhook');
         log('收到 chat webhook', 'OK');
       }
     }
 
-    log('5/5 查询 webhook 配置');
+    log('5/6 POST /chat（完整一次返回，对照）');
+    if (SKIP_CHAT) {
+      log('跳过', 'SKIP_CHAT=1');
+    } else {
+      const chat = await bigBlue('/chat', {
+        method: 'POST',
+        body: { text: '再回一句短的', user: '联调脚本' },
+      });
+      console.log(JSON.stringify(chat.json, null, 2));
+    }
+
+    log('6/6 查询 webhook 配置');
     const current = await bigBlue('/webhook');
     console.log(JSON.stringify(current.json, null, 2));
 

@@ -1,10 +1,12 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -106,7 +108,7 @@ public partial class MainWindow
 
             if (request.HttpMethod != "POST")
             {
-                await WriteHttpJson(response, 405, new { ok = false, error = "仅支持 GET /health、GET/POST /webhook、POST /say、POST /chat。" });
+                await WriteHttpJson(response, 405, new { ok = false, error = "仅支持 GET /health、GET/POST /webhook、POST /say、POST /say/stream、POST /chat、POST /chat/stream。" });
                 return;
             }
 
@@ -145,6 +147,13 @@ public partial class MainWindow
                 return;
             }
 
+            if (path == "/say/stream")
+            {
+                var text = ReadHttpText(root, "text", 4000);
+                await WriteSayStream(response, text);
+                return;
+            }
+
             if (path == "/chat")
             {
                 var text = ReadHttpText(root, "text", 1000);
@@ -162,7 +171,18 @@ public partial class MainWindow
                 return;
             }
 
-            await WriteHttpJson(response, 404, new { ok = false, error = "未知路径。可用：GET /health、GET/POST /webhook、POST /say、POST /chat。" });
+            if (path == "/chat/stream")
+            {
+                var text = ReadHttpText(root, "text", 1000);
+                var user = root.TryGetProperty("user", out var userNode) && userNode.ValueKind == JsonValueKind.String
+                    ? userNode.GetString()
+                    : null;
+                if (user != null && user.Length > 64) user = user[..64];
+                await WriteChatStream(response, text, user);
+                return;
+            }
+
+            await WriteHttpJson(response, 404, new { ok = false, error = "未知路径。可用：GET /health、GET/POST /webhook、POST /say、POST /say/stream、POST /chat、POST /chat/stream。" });
         }
         catch (ArgumentException e)
         {
@@ -178,7 +198,102 @@ public partial class MainWindow
         }
     }
 
-    private void ShowHttpSpeech(string text)
+    private async Task WriteChatStream(HttpListenerResponse response, string text, string? user)
+    {
+        BeginSse(response);
+        var channel = Channel.CreateUnbounded<(string Event, object Payload)>();
+        var produce = Task.Run(async () =>
+        {
+            try
+            {
+                await channel.Writer.WriteAsync(("start", new { ok = true, text, user, source = "chat" }));
+                var reply = await Dispatcher.InvokeAsync(() => GenerateHttpChatAsync(text, user, partial =>
+                {
+                    channel.Writer.TryWrite(("partial", new { text = partial, source = "chat" }));
+                })).Task.Unwrap();
+                if (reply.Length == 0)
+                    await channel.Writer.WriteAsync(("error", new { ok = false, error = "本地模型不可用、忙碌、已暂停，或未能生成回复。" }));
+                else
+                    await channel.Writer.WriteAsync(("done", new { ok = true, text, user, reply, source = "chat" }));
+            }
+            catch (Exception e)
+            {
+                await channel.Writer.WriteAsync(("error", new { ok = false, error = e.Message }));
+            }
+            finally { channel.Writer.TryComplete(); }
+        });
+
+        try
+        {
+            await foreach (var item in channel.Reader.ReadAllAsync())
+                await WriteSseEvent(response, item.Event, item.Payload);
+            await produce;
+        }
+        catch
+        {
+            try { response.Abort(); } catch { }
+        }
+        finally
+        {
+            try { response.OutputStream.Close(); } catch { }
+            try { response.Close(); } catch { }
+        }
+    }
+
+    private async Task WriteSayStream(HttpListenerResponse response, string text)
+    {
+        BeginSse(response);
+        try
+        {
+            await WriteSseEvent(response, "start", new { ok = true, text, source = "say" });
+            await Dispatcher.InvokeAsync(() => ShowHttpSpeech(text, publishWebhook: false));
+            var boundaries = StringInfo.ParseCombiningCharacters(text);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            int shown = 0;
+            while (shown < boundaries.Length)
+            {
+                int count = Math.Min(boundaries.Length, 1 + (int)(watch.Elapsed.TotalSeconds * CompanionSpeech.CharactersPerSecond));
+                if (count > shown)
+                {
+                    shown = count;
+                    var partial = count >= boundaries.Length ? text : text[..boundaries[count]];
+                    await WriteSseEvent(response, "partial", new { text = partial, source = "say" });
+                }
+                if (shown >= boundaries.Length) break;
+                await Task.Delay(25);
+            }
+            PublishSpeechWebhook(text, "say");
+            await WriteSseEvent(response, "done", new { ok = true, text, reply = text, source = "say" });
+        }
+        catch (Exception e)
+        {
+            try { await WriteSseEvent(response, "error", new { ok = false, error = e.Message }); } catch { }
+        }
+        finally
+        {
+            try { response.OutputStream.Close(); } catch { }
+            try { response.Close(); } catch { }
+        }
+    }
+
+    private static void BeginSse(HttpListenerResponse response)
+    {
+        response.StatusCode = 200;
+        response.ContentType = "text/event-stream; charset=utf-8";
+        response.Headers.Add("Cache-Control", "no-cache");
+        response.Headers.Add("Connection", "keep-alive");
+        response.SendChunked = true;
+    }
+
+    private static async Task WriteSseEvent(HttpListenerResponse response, string eventName, object payload)
+    {
+        var json = JsonSerializer.Serialize(payload);
+        var bytes = Encoding.UTF8.GetBytes($"event: {eventName}\ndata: {json}\n\n");
+        await response.OutputStream.WriteAsync(bytes);
+        await response.OutputStream.FlushAsync();
+    }
+
+    private void ShowHttpSpeech(string text, bool publishWebhook = true)
     {
         if (companionClosed || exitAnimation) throw new InvalidOperationException("桌宠正在退出。");
         InvalidateSpeechRequests();
@@ -187,10 +302,10 @@ public partial class MainWindow
         bubbleIsModelReply = false;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, true);
-        PublishSpeechWebhook(text, "say");
+        if (publishWebhook) PublishSpeechWebhook(text, "say");
     }
 
-    private async Task<string> GenerateHttpChatAsync(string text, string? user)
+    private async Task<string> GenerateHttpChatAsync(string text, string? user, Action<string>? onStream = null)
     {
         if (companionClosed || exitAnimation) return "";
         if (!preferences.ModelEnabled || !brain.ModelAvailable || !brain.CanRunOnCurrentPower) return "";
@@ -217,6 +332,7 @@ public partial class MainWindow
             {
                 streamed = true;
                 ShowCompanionPartial(partial, version, true);
+                onStream?.Invoke(partial);
             });
         }
         finally
