@@ -54,7 +54,9 @@ GET http://127.0.0.1:19265/health
 
 ## Speech Webhook（桌宠 → 你的程序）
 
-鱼鱼**真正开口**时（日常吐字、天气、吐字测试、`/say`、`/chat`、请安等），会向你配置的本机 URL 发一次 `POST`。流式生成过程中的中间片段不会推送，只推最终完整句子。
+鱼鱼**主动开口**时（日常吐字、天气、吐字测试、请安、Agent `say` 等），会向你配置的本机 URL 发一次 `POST`。流式中间片段不推，只推最终完整句子。
+
+**不会**对 HTTP 的 `/say`、`/say/stream`、`/chat`、`/chat/stream` 再推 webhook——这些接口的响应 / SSE 里已经有全文，避免同一句收两遍。
 
 状态提示（如「正在查看天气」「请先启用模型」）**不会**推送。
 
@@ -105,8 +107,7 @@ Content-Type: application/json
 | `auto` | 日常自动吐字 |
 | `weather` | 天气播报 |
 | `test` | 右键「吐字测试」 |
-| `say` | `POST /say` 或 Agent `say` |
-| `chat` | `POST /chat` 本地模型回复 |
+| `say` | Agent / MCP 的 `say`（HTTP `/say` 不走 webhook） |
 | `local` | Agent 触发的本地吐字 |
 | `greeting` | 启动请安等问候 |
 | `speech` | 其他气泡显示 |
@@ -337,7 +338,7 @@ async function chatStream(text, user) {
 }
 ```
 
-说明：Webhook 仍只在整句定稿后推一次；流式请用上述 SSE 接口。
+说明：流式请用 SSE 接口。HTTP `/chat`、`/say` 及其 stream **不**再触发 webhook；主动吐字仍走 webhook。
 
 ---
 

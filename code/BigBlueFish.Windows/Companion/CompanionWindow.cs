@@ -525,14 +525,14 @@ public partial class MainWindow
         bubbleUntil = seconds == 0 ? DateTime.MaxValue : DateTime.UtcNow.AddSeconds(seconds);
     }
 
-    private void ShowCompanionBubble(string text, bool agentTriggered = false, string source = "speech")
+    private void ShowCompanionBubble(string text, bool agentTriggered = false, string source = "speech", bool notifyWebhook = true)
     {
         if (PuppetActive && !agentTriggered) return;
         externalBubble = false;
         bubbleIsModelReply = true;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, true);
-        PublishSpeechWebhook(text, source);
+        if (notifyWebhook) PublishSpeechWebhook(text, source);
     }
 
     private void ShowCompanionPartial(string text, long? expectedVersion = null, bool agentTriggered = false)
@@ -550,12 +550,12 @@ public partial class MainWindow
         speech.ShowPartial(text);
     }
 
-    private void FinishCompanionPartial(string text, bool agentTriggered = false, string source = "speech")
+    private void FinishCompanionPartial(string text, bool agentTriggered = false, string source = "speech", bool notifyWebhook = true)
     {
         if (PuppetActive && !agentTriggered || text.Length == 0) return;
         ShowCompanionPartial(text, agentTriggered: agentTriggered);
         ResetBubbleDeadline();
-        PublishSpeechWebhook(text, source);
+        if (notifyWebhook) PublishSpeechWebhook(text, source);
     }
 
     private void BeginModelSpeech()

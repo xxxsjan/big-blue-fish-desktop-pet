@@ -142,7 +142,8 @@ public partial class MainWindow
             if (path == "/say")
             {
                 var text = ReadHttpText(root, "text", 4000);
-                await Dispatcher.InvokeAsync(() => ShowHttpSpeech(text));
+                // HTTP 调用方已从响应拿到全文，不再二次 webhook，避免与 Chat/Say 重复。
+                await Dispatcher.InvokeAsync(() => ShowHttpSpeech(text, publishWebhook: false));
                 await WriteHttpJson(response, 200, new { ok = true, displayed = true, text });
                 return;
             }
@@ -262,7 +263,6 @@ public partial class MainWindow
                 if (shown >= boundaries.Length) break;
                 await Task.Delay(25);
             }
-            PublishSpeechWebhook(text, "say");
             await WriteSseEvent(response, "done", new { ok = true, text, reply = text, source = "say" });
         }
         catch (Exception e)
@@ -342,8 +342,9 @@ public partial class MainWindow
 
         if (version == speechRequestVersion && !companionClosed && reply.Length > 0)
         {
-            if (streamed) FinishCompanionPartial(reply, true, "chat");
-            else ShowCompanionBubble(reply, true, "chat");
+            // 响应 / SSE 已交付全文，跳过 webhook，避免调用方收两遍。
+            if (streamed) FinishCompanionPartial(reply, true, "chat", notifyWebhook: false);
+            else ShowCompanionBubble(reply, true, "chat", notifyWebhook: false);
             return reply;
         }
         if (streamed && version == speechRequestVersion) ClearCompanionModelReply();

@@ -147,14 +147,17 @@ async function main() {
     if (!sayEvents.some(e => e.event === 'done')) throw new Error('/say/stream 未收到 done');
     if (lastPartial !== sayText) throw new Error('/say/stream 最终 partial 与原文不一致');
     log('say/stream', 'OK');
-    const sayHook = await waitForWebhook(p => p.source === 'say' && p.text === sayText);
-    if (!sayHook) throw new Error('超时：未收到 /say/stream 对应的 webhook');
-    log('收到 say webhook', 'OK');
+    await sleep(800);
+    if (received.some(p => p.source === 'say' && p.text === sayText)) {
+      throw new Error('不应收到 /say/stream 的 webhook（HTTP 已返回全文）');
+    }
+    log('确认无 say webhook', 'OK');
 
     if (SKIP_CHAT) {
       log('4/6 /chat/stream', '已跳过（SKIP_CHAT=1）');
     } else {
       log('4/6 POST /chat/stream', '会走本地模型，可能要几十秒');
+      const before = received.length;
       let reply = '';
       const chatEvents = await bigBlueStream(
         '/chat/stream',
@@ -174,17 +177,16 @@ async function main() {
         }
       );
       if (chatEvents.some(e => e.event === 'error') && !reply) {
-        log('警告', '/chat/stream 失败（模型未就绪？），跳过 webhook 校验');
+        log('警告', '/chat/stream 失败（模型未就绪？）');
       } else if (!reply) {
         throw new Error('/chat/stream 未收到 done/reply');
       } else {
         log('chat/stream reply', reply);
-        const chatHook = await waitForWebhook(
-          p => p.source === 'chat' && p.text === reply,
-          15000
-        );
-        if (!chatHook) throw new Error('超时：未收到 /chat/stream 对应的 webhook');
-        log('收到 chat webhook', 'OK');
+        await sleep(800);
+        if (received.slice(before).some(p => p.source === 'chat' && p.text === reply)) {
+          throw new Error('不应收到 /chat/stream 的 webhook（HTTP 已返回全文）');
+        }
+        log('确认无 chat webhook', 'OK');
       }
     }
 
@@ -205,8 +207,8 @@ async function main() {
 
     console.log('');
     console.log('=== 全部通过 ===');
-    console.log(`本轮共收到 webhook ${received.length} 条`);
-    console.log('提示：可再在桌宠里点「天气」或「吐字测试」，观察本窗口是否继续打印 webhook。');
+    console.log(`本轮 webhook 条数（HTTP say/chat 应为 0）：${received.length}`);
+    console.log('提示：可再在桌宠里点「天气」或「吐字测试」，那些才会打到 webhook。');
     console.log('按 Ctrl+C 结束监听。');
 
     await new Promise(() => {});
