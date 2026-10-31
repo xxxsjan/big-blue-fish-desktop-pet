@@ -148,6 +148,12 @@ internal sealed class CompanionBrain : IDisposable
     internal const string NewsPersona = CompanionDialogue.NewsPersona;
     internal static string NewsRequest(string context) => $"当前时间：{DateTime.Now:yyyy-MM-dd HH:mm}\n【本轮单条科技新闻资料】\n" + context
         + "\n【新闻资料结束】\n请直接对主人说两小句：先说这条新闻最重要的事，再说一点自己的感受或对主人的关切。合起来约30–60字。";
+    internal const string ChatPersona = CompanionDialogue.ChatPersona;
+    internal static string ChatRequest(string text, string? user)
+    {
+        var who = string.IsNullOrWhiteSpace(user) ? "一位观众" : user.Trim();
+        return $"当前时间：{DateTime.Now:yyyy-MM-dd HH:mm}\n【本轮弹幕】\n发送者：{who}\n内容：{text.Trim()}\n【弹幕结束】\n请直接输出鱼鱼要说的那一小句。";
+    }
 
     internal sealed record ChatMessage(string role, object content);
     internal static string FixedSpeechInstructions(string persona) => persona
@@ -433,6 +439,37 @@ internal sealed class CompanionBrain : IDisposable
         {
             StopRunner(); RecordFailure("生成", e);
             Status = e is IOException ? e.Message : "暂时无法获取或播报天气，请稍后重试";
+            return "";
+        }
+        finally
+        {
+            Busy = false;
+            active?.Dispose();
+            active = null;
+            if (!CanRunOnCurrentPower) StopRunner();
+        }
+    }
+
+    internal async Task<string> GenerateChat(string text, string? user = null, Action<string>? onPartial = null)
+    {
+        if (disposed || Busy || !CanRunOnCurrentPower || string.IsNullOrWhiteSpace(text))
+            return "";
+        Busy = true;
+        active = new CancellationTokenSource(TimeSpan.FromSeconds(100));
+        var token = active.Token;
+        try
+        {
+            await EnsureRunner(token);
+            Status = "正在回应弹幕";
+            var reply = await Complete(ChatPersona, ChatRequest(text, user), CompanionDialogue.Temperature, token, onPartial: onPartial);
+            Status = ReadyStatus("本地模型就绪");
+            return CanRunOnCurrentPower ? reply : "";
+        }
+        catch (OperationCanceledException) { StopRunner(); Status = "弹幕回应已取消"; return ""; }
+        catch (Exception e)
+        {
+            StopRunner(); RecordFailure("生成", e);
+            Status = e is IOException ? e.Message : "暂时无法回应弹幕，请稍后重试";
             return "";
         }
         finally

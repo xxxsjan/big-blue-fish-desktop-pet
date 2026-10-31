@@ -28,6 +28,7 @@ public partial class MainWindow
     {
         ShowCompanionNotice(text);
         greetingNoticeActive = true;
+        PublishSpeechWebhook(text, "greeting");
         bubbleUntil = DateTime.MaxValue;
     }
     private void EndGreetingNotice()

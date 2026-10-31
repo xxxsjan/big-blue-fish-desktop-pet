@@ -109,7 +109,7 @@ public partial class MainWindow
         if (!preferences.ModelEnabled || !brain.ModelAvailable || !brain.CanRunOnCurrentPower) throw new InvalidOperationException("本地模型未启用、尚未安装或已按供电设置暂停。");
         if (speechRequestPending || companionClosed || exitAnimation || modelInstaller != null || hiddenByUser || fullscreenHidden) throw new InvalidOperationException("鱼鱼当前忙碌或隐藏，请稍后再触发本地吐字。");
         using var registration = token.Register(() => Dispatcher.BeginInvoke(() => InvalidateSpeechRequests()));
-        await GenerateLocalSpeechAsync(true);
+        await GenerateLocalSpeechAsync(true, "local");
         token.ThrowIfCancellationRequested();
     }
     private void PublishMcpInteraction(string kind, object detail)
@@ -139,6 +139,7 @@ public partial class MainWindow
         bubbleIsModelReply = false;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, true);
+        PublishSpeechWebhook(text, "say");
     }
     private bool ConsumeMcpSpeech()
     {

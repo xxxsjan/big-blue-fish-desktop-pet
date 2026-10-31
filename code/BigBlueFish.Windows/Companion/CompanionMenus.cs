@@ -87,7 +87,7 @@ public partial class MainWindow
             if (version == speechRequestVersion && !companionClosed && !hiddenByUser && !fullscreenHidden && preferences.ModelEnabled
                 && brain.CanRunOnCurrentPower && regionCode == preferences.WeatherRegionCode)
             {
-                if (text.Length > 0) { FinishCompanionPartial(text, true); }
+                if (text.Length > 0) { FinishCompanionPartial(text, true, "weather"); }
                 else ShowCompanionNotice("主人，" + brain.Status + "。", manual: true);
             }
         }
@@ -118,7 +118,7 @@ public partial class MainWindow
         // A test directly enters the same single handler used when the ordinary
         // speech countdown reaches zero.
         speechForegroundOverride = CompanionNative.ResolveSpeechForeground(CompanionNative.GetForegroundWindow(), lastExternalForeground);
-        await GenerateLocalSpeechAsync(true);
+        await GenerateLocalSpeechAsync(true, "test");
     }
 
     private async Task<bool> TryManualAgentSpeech(bool weather)

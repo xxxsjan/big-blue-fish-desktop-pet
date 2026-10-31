@@ -273,6 +273,7 @@ public partial class MainWindow
         nextAction = DateTime.UtcNow.AddSeconds(12);
         companionTimer.Start();
         InitializeMcp();
+        StartHttpApi();
     }
 
     private Task LoadCompanionAnimations()
@@ -524,13 +525,14 @@ public partial class MainWindow
         bubbleUntil = seconds == 0 ? DateTime.MaxValue : DateTime.UtcNow.AddSeconds(seconds);
     }
 
-    private void ShowCompanionBubble(string text, bool agentTriggered = false)
+    private void ShowCompanionBubble(string text, bool agentTriggered = false, string source = "speech")
     {
         if (PuppetActive && !agentTriggered) return;
         externalBubble = false;
         bubbleIsModelReply = true;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, true);
+        PublishSpeechWebhook(text, source);
     }
 
     private void ShowCompanionPartial(string text, long? expectedVersion = null, bool agentTriggered = false)
@@ -548,10 +550,12 @@ public partial class MainWindow
         speech.ShowPartial(text);
     }
 
-    private void FinishCompanionPartial(string text, bool agentTriggered = false)
+    private void FinishCompanionPartial(string text, bool agentTriggered = false, string source = "speech")
     {
+        if (PuppetActive && !agentTriggered || text.Length == 0) return;
         ShowCompanionPartial(text, agentTriggered: agentTriggered);
         ResetBubbleDeadline();
+        PublishSpeechWebhook(text, source);
     }
 
     private void BeginModelSpeech()
@@ -626,10 +630,10 @@ public partial class MainWindow
                         companionSettings?.Close();
                         break;
                     case "bubble":
-                        ShowCompanionBubble("主人，小女仆今天也元气满满地来报到啦～");
+                        ShowCompanionBubble("主人，小女仆今天也元气满满地来报到啦～", source: "greeting");
                         break;
                     case "bubble-next":
-                        ShowCompanionBubble("主人，下一句已经送到啦，小尾巴也跟着摇起来～");
+                        ShowCompanionBubble("主人，下一句已经送到啦，小尾巴也跟着摇起来～", source: "greeting");
                         break;
                     case "battery":
                         CompanionNative.TestPowerOverride = false;
@@ -727,9 +731,9 @@ public partial class MainWindow
         if (!ConsumeMcpSpeech() && !DispatchAgentDaily()) await SpeechCountdownZeroAsync();
     }
 
-    private Task SpeechCountdownZeroAsync() => GenerateLocalSpeechAsync(false);
+    private Task SpeechCountdownZeroAsync() => GenerateLocalSpeechAsync(false, "auto");
 
-    private async Task GenerateLocalSpeechAsync(bool agentTriggered)
+    private async Task GenerateLocalSpeechAsync(bool agentTriggered, string source = "auto")
     {
         var foregroundHandle = speechForegroundOverride
             ?? CompanionNative.ResolveSpeechForeground(CompanionNative.GetForegroundWindow(), lastExternalForeground);
@@ -769,9 +773,9 @@ public partial class MainWindow
         if (version == speechRequestVersion && !companionClosed && !hiddenByUser && !fullscreenHidden && preferences.ModelEnabled && brain.CanRunOnCurrentPower && text.Length > 0)
         {
             if (streamed)
-                FinishCompanionPartial(text, agentTriggered);
+                FinishCompanionPartial(text, agentTriggered, source);
             else
-                ShowCompanionBubble(text, agentTriggered);
+                ShowCompanionBubble(text, agentTriggered, source);
         }
         else if (streamed && version == speechRequestVersion)
         {
@@ -853,6 +857,7 @@ public partial class MainWindow
         modelInstaller?.RequestClose();
         updateWindow?.RequestClose();
         StopMcp();
+        StopHttpApi();
         companionContextMenu.IsOpen = false;
         companionMenuDismissal?.Dispose();
         companionTimer?.Stop();
