@@ -45,6 +45,16 @@ Check(File.Exists(skills.SkillPath) && File.ReadAllText(skills.SkillPath).Contai
 Check(skills.DirectoryPath.Contains(".claude"), "Claude skill uses project discovery directory");
 AtomicText.Write(skills.PersonaPath, "user persona"); skills.Install();
 Check(File.ReadAllText(skills.PersonaPath) == "user persona", "user persona preserved on repeated install");
+Check(skills.ActivePersona().Id == AgentSkillStore.DefaultPersonaId && skills.ActivePersona().Builtin, "default persona is active and builtin");
+skills.SavePersona(AgentSkillStore.DefaultPersonaId, AgentSkillStore.DefaultPersonaName, "user persona");
+var custom = skills.CreatePersona("冷静版", "calm persona");
+Check(skills.ListPersonas().Length == 2 && skills.ReadPersonaContent(custom.Id) == "calm persona", "custom persona created");
+skills.ApplyPersona(custom.Id);
+Check(File.ReadAllText(skills.PersonaPath) == "calm persona" && skills.ActivePersona().Id == custom.Id, "custom persona applied to active file");
+bool blocked = false; try { skills.DeletePersona(AgentSkillStore.DefaultPersonaId); } catch (InvalidOperationException) { blocked = true; }
+Check(blocked && skills.ListPersonas().Any(x => x.Id == AgentSkillStore.DefaultPersonaId), "default persona cannot be deleted");
+skills.DeletePersona(custom.Id);
+Check(skills.ActivePersona().Id == AgentSkillStore.DefaultPersonaId && File.ReadAllText(skills.PersonaPath) == "user persona", "deleting active custom persona restores default");
 var jobsRoot = Path.Combine(root, "jobs"); var jobs = new AgentWakeups(jobsRoot);
 var now = new DateTimeOffset(2026, 10, 30, 12, 0, 0, TimeSpan.FromHours(8));
 var one = jobs.Schedule("kimi", "one", "care", 30, null, null, now);

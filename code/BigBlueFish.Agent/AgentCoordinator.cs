@@ -219,7 +219,7 @@ public sealed class AgentCoordinator : IDisposable
                     if (request.Kind == "start_care") initialCare = false;
                     string fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Skills.Guide())));
                     string setup = guideFingerprint != fingerprint
-                        ? $"请使用 big-blue-fish 技能。技能已安装于 {Skills.SkillPath}，同目录 persona.md 为当前人设。请重新读取，当前文件中的人设取代本对话以前的鱼鱼人设；空文件表示使用主人已有的Agent设定。读取工具不可用时调用 get_operation_guide 获取内容。让鱼鱼发言时调用 say，普通回答留在 Agent 对话中。\n" : "请继续使用 big-blue-fish 技能处理本事件。\n";
+                        ? $"请使用 big-blue-fish 技能。技能已安装于 {Skills.SkillPath}，同目录 persona.md 为当前生效人设（{Skills.ActivePersona().Name}）。请重新读取，当前文件中的人设取代本对话以前的鱼鱼人设；空文件表示使用主人已有的Agent设定。读取工具不可用时调用 get_operation_guide 获取内容。让鱼鱼发言时调用 say，普通回答留在 Agent 对话中。\n" : "请继续使用 big-blue-fish 技能处理本事件。\n";
                     string text = "来源：蓝色大肥鱼桌宠软件\n" + setup + "事件：" + request.Kind + "\n本地时间：" + DateTimeOffset.Now.ToString("O")
                         + "\n当前模式：" + JsonSerializer.Serialize(mode) + "\n事件内容：" + JsonSerializer.Serialize(payload, EventJson);
                     text += mode.Puppet && !mode.DailyCare
@@ -437,7 +437,12 @@ public sealed class AgentCoordinator : IDisposable
 
     public object ExecuteTool(string name, JsonElement args)
     {
-        if (name == "get_operation_guide") { Skills.Install(); return new { guide = Skills.Guide(), skillPath = Skills.SkillPath, personaPath = Skills.PersonaPath }; }
+        if (name == "get_operation_guide")
+        {
+            Skills.Install();
+            var active = Skills.ActivePersona();
+            return new { guide = Skills.Guide(), skillPath = Skills.SkillPath, personaPath = Skills.PersonaPath, personaId = active.Id, personaName = active.Name };
+        }
         if (name == "get_wakeups") return new { reservations = Wakeups.List(harnessId, sessionId), active = mode.Enabled && mode.Puppet };
         if (name == "cancel_wakeup") return new { cancelled = Wakeups.Cancel(harnessId, sessionId, args.GetProperty("id").GetString()!) };
         if (name != "schedule_wakeup") throw new ArgumentException("未知预约工具。");

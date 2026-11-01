@@ -60,7 +60,9 @@ public partial class MainWindow
         var puppet = new CheckBox { Content = ControlTools.BehaviorControlLabel, IsChecked = preferences.PuppetMode, Margin = new(0, 10, 0, 5) };
         extra.Children.Add(puppet); extra.Children.Add(ModernUI.Text(ControlTools.BehaviorControlDescription));
         var wake = ModernUI.Text(""); extra.Children.Add(wake);
-        extra.Children.Add(ModernUI.Button("编辑人设", () => EditAgentPersona(owner)));
+        var personaSummary = ModernUI.Text("");
+        extra.Children.Add(personaSummary);
+        extra.Children.Add(ModernUI.Button("管理人设", () => EditAgentPersona(owner)));
         var details = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray };
         extra.Children.Add(new Expander { Header = "连接详情", Content = details, Margin = new(0, 10, 0, 8) });
         var clock = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
@@ -76,6 +78,17 @@ public partial class MainWindow
                 ? "下一次日常关心：" + (agent?.NextWake ?? "等待 Agent 安排")
                 : preferences.PuppetMode ? "Agent 安排日常关心的时机，本地模型负责吐字。下一次关心：" + (agent?.NextWake ?? "等待 Agent 预约") : preferences.AgentDailySpeech ? "鱼鱼决定何时关心主人，Agent 编写关心的话。" : "鱼鱼按自己的节奏关心主人，日常说话使用内置模型。";
             if (preferences.PuppetMode && agent?.Connected != true) wake.Text += "\nAgent 未连接，鱼鱼保持待机；关闭第二个开关可恢复鱼鱼自己的安排。";
+            try
+            {
+                if (agent == null) personaSummary.Text = "当前人设：未连接";
+                else
+                {
+                    var skills = agent.Skills; skills.Install();
+                    var active = skills.ActivePersona();
+                    personaSummary.Text = "当前人设：" + active.Name + (active.Builtin ? "（默认，不可删除）" : "");
+                }
+            }
+            catch { personaSummary.Text = "当前人设：读取失败"; }
         }
         select.SelectionChanged += (_, _) => {
             if (updating || select.SelectedItem is not ComboBoxItem { Tag: string id }) return;
@@ -117,11 +130,102 @@ public partial class MainWindow
     {
         if (agent == null) return;
         var skills = agent.Skills; skills.Install();
-        var dialog = new ModernWindow("鱼鱼人设", "鱼鱼人设", "保存后，在 Agent 的下一轮消息中应用；可修改或清空。", 700, 620) { Owner = owner };
-        var editor = new TextBox { Text = File.ReadAllText(skills.PersonaPath), AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 320, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var dialog = new ModernWindow("鱼鱼人设", "鱼鱼人设", "可保存多份人设。默认人设不可删除；应用后在 Agent 下一轮消息中生效。", 760, 700) { Owner = owner };
+        var list = new ComboBox { MinHeight = 38, Margin = new(0, 0, 0, 8), HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var name = new TextBox { Margin = new(0, 0, 0, 8) };
+        var editor = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var status = ModernUI.Text("");
+        bool loading = false;
+        string? selectedId = null;
+        void LoadList(string? prefer = null)
+        {
+            loading = true;
+            var active = skills.ActivePersona();
+            prefer ??= selectedId ?? active.Id;
+            list.Items.Clear();
+            foreach (var persona in skills.ListPersonas())
+            {
+                string mark = persona.Id == active.Id ? " · 使用中" : "";
+                string builtin = persona.Builtin ? " · 默认" : "";
+                var item = new ComboBoxItem { Content = persona.Name + builtin + mark, Tag = persona.Id };
+                list.Items.Add(item);
+                if (persona.Id == prefer) list.SelectedItem = item;
+            }
+            if (list.SelectedItem == null && list.Items.Count > 0) list.SelectedItem = list.Items[0];
+            loading = false;
+            ShowSelected();
+        }
+        void ShowSelected()
+        {
+            if (list.SelectedItem is not ComboBoxItem { Tag: string id }) return;
+            selectedId = id;
+            var persona = skills.ListPersonas().First(x => x.Id == id);
+            name.Text = persona.Name;
+            editor.Text = skills.ReadPersonaContent(id);
+            status.Text = persona.Id == skills.ActivePersona().Id
+                ? "这份人设正在使用。保存会立刻写入当前生效文件。"
+                : "这份人设尚未应用。可先编辑保存，再点“应用”。";
+        }
+        list.SelectionChanged += (_, _) => { if (!loading) ShowSelected(); };
+        dialog.Body.Children.Add(ModernUI.Text("选择人设"));
+        dialog.Body.Children.Add(list);
+        dialog.Body.Children.Add(ModernUI.Text("名称"));
+        dialog.Body.Children.Add(name);
+        dialog.Body.Children.Add(ModernUI.Text("内容"));
         dialog.Body.Children.Add(editor);
-        dialog.Actions.Children.Add(ModernUI.Button("保存", () => { AtomicText.Write(skills.PersonaPath, editor.Text); dialog.Close(); }, true));
-        dialog.Actions.Children.Add(ModernUI.Button("取消", dialog.Close)); dialog.Show();
+        dialog.Body.Children.Add(status);
+        var row = new WrapPanel { Margin = new(0, 8, 0, 0) };
+        row.Children.Add(ModernUI.Button("新建", () => {
+            try
+            {
+                var created = skills.CreatePersona(string.IsNullOrWhiteSpace(name.Text) ? "新人设" : name.Text.Trim(), editor.Text);
+                LoadList(created.Id);
+            }
+            catch (Exception error) { ModernUI.Error(dialog, "新建人设失败", error); }
+        }));
+        row.Children.Add(ModernUI.Button("保存", () => {
+            try
+            {
+                if (selectedId == null) return;
+                skills.SavePersona(selectedId, name.Text, editor.Text);
+                LoadList(selectedId);
+            }
+            catch (Exception error) { ModernUI.Error(dialog, "保存人设失败", error); }
+        }, true));
+        row.Children.Add(ModernUI.Button("应用", () => {
+            try
+            {
+                if (selectedId == null) return;
+                skills.SavePersona(selectedId, name.Text, editor.Text);
+                skills.ApplyPersona(selectedId);
+                LoadList(selectedId);
+            }
+            catch (Exception error) { ModernUI.Error(dialog, "应用人设失败", error); }
+        }));
+        row.Children.Add(ModernUI.Button("删除", async () => {
+            try
+            {
+                if (selectedId == null) return;
+                var persona = skills.ListPersonas().First(x => x.Id == selectedId);
+                if (persona.Builtin) { ModernUI.Error(dialog, "无法删除", new InvalidOperationException("默认人设不能删除。")); return; }
+                if (!await ConfirmMcp(dialog, "删除人设", $"确定删除人设“{persona.Name}”？此操作不可恢复。", accept: "删除")) return;
+                skills.DeletePersona(selectedId);
+                LoadList(skills.ActivePersona().Id);
+            }
+            catch (Exception error) { ModernUI.Error(dialog, "删除人设失败", error); }
+        }));
+        row.Children.Add(ModernUI.Button("恢复默认原文", () => {
+            try
+            {
+                if (selectedId != AgentSkillStore.DefaultPersonaId) return;
+                skills.ResetDefaultPersona();
+                LoadList(AgentSkillStore.DefaultPersonaId);
+            }
+            catch (Exception error) { ModernUI.Error(dialog, "恢复默认人设失败", error); }
+        }));
+        dialog.Body.Children.Add(row);
+        dialog.Actions.Children.Add(ModernUI.Button("关闭", dialog.Close));
+        LoadList(); dialog.Show();
     }
     private async Task<string?> RequestAgentPermission(AgentPermission request, CancellationToken token)
     {
