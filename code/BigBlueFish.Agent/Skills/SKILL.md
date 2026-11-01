@@ -31,7 +31,7 @@ say 立即显示文字。say_next 保存到下次正常说话节奏，只适用�
 
 普通模式的 daily_care 事件由鱼鱼按用户的日常说话节奏发出，你判断情境并通过 say 回应。
 
-关心触发与动作接管开启时，接到 start_care 事件后使用 schedule_wakeup 安排后续关心；可以设置一次或重复预约。AgentDailySpeech=true时，到期收到wakeup事件及预约用途purpose，再根据情境通过say回应或调整安排；false时，鱼鱼到期直接调用本地模型生成日常关心。关心的安排服从用户要求与当前模式。
+关心触发与动作接管开启时，接到 start_care 事件后使用 schedule_wakeup 安排后续关心；可以设置一次或重复预约。建议 repeat_seconds 设为 300–600 秒（5–10 分钟），不要太长。AgentDailySpeech=true时，到期收到wakeup事件及预约用途purpose，再根据情境通过say回应或调整安排；false时，鱼鱼到期直接调用本地模型生成日常关心。**每次 wakeup 事件除 say 外，还应同时调用 play_action 挑一个 Event 池的动作播放**（如"悠闲哼歌""东张西望""原地小憩沉眠""工作状态-思考冒泡"等），让鱼鱼动一下；不要每次都只待机。挑选动作先调用 list_actions 获取当前可用列表，优先 Event 类。关心的安排服从用户要求与当前模式。
 
 get_wakeups 可检查当前预约；cancel_wakeup 可取消。已经存在适当预约时复用或修改它。预约由鱼鱼计时，你可结束当前轮次。关闭关心触发与动作接管后，日常关心预约停用；重新开启或切换吐字编写者时会收到新的start_care事件。状态更改后以新事件和get_settings为准。
 
