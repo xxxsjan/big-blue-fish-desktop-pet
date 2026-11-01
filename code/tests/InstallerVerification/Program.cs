@@ -84,8 +84,10 @@ internal static class Checks
             while (!process.HasExited && process.MainWindowHandle == IntPtr.Zero && DateTime.UtcNow < limit);
             Check(!process.HasExited && process.MainWindowHandle != IntPtr.Zero, "actual uninstall worker reaches completion dialog");
             var dialog = AutomationElement.FromHandle(process.MainWindowHandle);
-            Check(dialog.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "蓝色大肥鱼已卸载。")) != null,
-                "actual standalone worker reports successful removal");
+            bool reported = dialog.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "蓝色大肥鱼已卸载，模型和设置已删除。")) != null
+                || dialog.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty,
+                    "蓝色大肥鱼程序已卸载。\n模型和设置已保留在：\n" + Path.Combine(target, "data"))) != null;
+            Check(reported, "actual standalone worker reports successful removal");
             var ok = dialog.FindFirst(TreeScope.Descendants, new AndCondition(
                 new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
                 new PropertyCondition(AutomationElement.NameProperty, "确定")));

@@ -112,7 +112,13 @@ internal sealed class ModelInstallWindow : ModernWindow
     {
         manualPanel.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
         RefreshDownloadAction();
-        if (value) Open(source.Page);
+        // 用户点选手动安装时不自动打开浏览器，避免抢焦点、看起来像安装窗口消失。
+        // 下载失败 / 放弃自动安装转入手动时由 EnterManual 打开对应页面。
+    }
+    private void EnterManual(string page)
+    {
+        manual.IsChecked = true;
+        Open(page);
     }
     private void SetBusy(bool busy)
     {
@@ -155,56 +161,96 @@ internal sealed class ModelInstallWindow : ModernWindow
     private async Task Install()
     {
         if (busy || closed || closeRequested) return;
-        if (manual.IsChecked == true)
-        {
-            var files = Directory.GetFiles(Path.Combine(directory, "models"), "*.gguf").Where(p => !Path.GetFileName(p).Contains("mmproj", StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (files.Length == 1) await Import(files[0]); else await PickFile();
-            return;
-        }
-        var activeSource = source;
-        abandonRequested = false;
-        download = new CancellationTokenSource(); SetBusy(true);
         try
         {
-            var path = Path.Combine(directory, "models", activeSource.FileName);
-            status.Text = "正在从" + activeSource.Label + "下载模型…";
-            await ArtifactDownload.Download(activeSource.Url, path, activeSource.Sha256,
-                new Progress<ArtifactDownload.Progress>(p => { if (closed || closeRequested || download?.IsCancellationRequested != false) return; progress.Value = p.Percent; status.Text = p.ToString(); }), download.Token, client);
-            download.Token.ThrowIfCancellationRequested();
-            if (!ModelStore.IsGguf(path)) throw new InvalidDataException("下载文件不是有效的 GGUF 模型。");
-            ModelStore.Save(directory, new ModelStore.Selection(activeSource.Id, activeSource.FileName, activeSource.Sha256));
-            Completed = true; succeeded = true; Close();
-        }
-        catch (OperationCanceledException) { if (!closed && !closeRequested && !abandonRequested) status.Text = "下载已停止，已有进度已保留。"; }
-        catch (Exception)
-        {
-            if (closed || closeRequested || abandonRequested) return;
-            int choice = ModernUI.Choice(this, "模型下载未完成", "您可以改善网络环境后重试，手动安装模型，或无模型启动。", "重试", "手动安装模型", "无模型启动");
-            if (choice == 0) _ = Dispatcher.BeginInvoke(new Action(async () => await Install()));
-            else if (choice == 1) { manual.IsChecked = true; }
-            else if (choice == 2) FinishWithoutModel();
-        }
-        finally
-        {
-            download.Dispose(); download = null;
-            bool switchToManual = abandonRequested;
-            abandonRequested = false;
-            if (switchToManual)
+            if (manual.IsChecked == true)
             {
-                try { ModelStore.DiscardPartial(directory, activeSource); }
-                catch (Exception error)
+                await ContinueManual();
+                return;
+            }
+            var activeSource = source;
+            abandonRequested = false;
+            download = new CancellationTokenSource(); SetBusy(true);
+            try
+            {
+                var path = Path.Combine(directory, "models", activeSource.FileName);
+                status.Text = "正在从" + activeSource.Label + "下载模型…";
+                await ArtifactDownload.Download(activeSource.Url, path, activeSource.Sha256,
+                    new Progress<ArtifactDownload.Progress>(p => { if (closed || closeRequested || download?.IsCancellationRequested != false) return; progress.Value = p.Percent; status.Text = p.ToString(); }), download.Token, client);
+                download.Token.ThrowIfCancellationRequested();
+                if (!ModelStore.IsGguf(path)) throw new InvalidDataException("下载文件不是有效的 GGUF 模型。");
+                ModelStore.Save(directory, new ModelStore.Selection(activeSource.Id, activeSource.FileName, activeSource.Sha256));
+                Completed = true; succeeded = true; Close();
+            }
+            catch (OperationCanceledException) { if (!closed && !closeRequested && !abandonRequested) status.Text = "下载已停止，已有进度已保留。"; }
+            catch (Exception)
+            {
+                if (closed || closeRequested || abandonRequested) return;
+                int choice = ModernUI.Choice(this, "模型下载未完成", "您可以改善网络环境后重试，手动安装模型，或无模型启动。", "重试", "手动安装模型", "无模型启动");
+                if (choice == 0) _ = Dispatcher.BeginInvoke(new Action(async () => await Install()));
+                else if (choice == 1) EnterManual(activeSource.Page);
+                else if (choice == 2) FinishWithoutModel();
+            }
+            finally
+            {
+                download.Dispose(); download = null;
+                bool switchToManual = abandonRequested;
+                abandonRequested = false;
+                if (switchToManual)
                 {
-                    switchToManual = false;
-                    if (!closed && !closeRequested) ModernUI.Error(this, "未能清理未完成的下载", error);
+                    try { ModelStore.DiscardPartial(directory, activeSource); }
+                    catch (Exception error)
+                    {
+                        switchToManual = false;
+                        if (!closed && !closeRequested) ModernUI.Error(this, "未能清理未完成的下载", error);
+                    }
+                }
+                SetBusy(false);
+                if (closeRequested && !closed) Close();
+                else if (switchToManual && !closed)
+                {
+                    progress.Value = 0; status.Text = "已放弃自动安装，请手动安装模型。";
+                    EnterManual(activeSource.Page);
                 }
             }
-            SetBusy(false);
-            if (closeRequested && !closed) Close();
-            else if (switchToManual && !closed)
-            {
-                progress.Value = 0; status.Text = "已放弃自动安装，请手动安装模型。";
-                manual.IsChecked = true;
-            }
         }
+        catch (Exception error)
+        {
+            if (!closed && !closeRequested) ModernUI.Error(this, "模型安装未完成", error);
+        }
+    }
+
+    private async Task ContinueManual()
+    {
+        var folder = Path.Combine(directory, "models");
+        Directory.CreateDirectory(folder);
+        var files = Directory.GetFiles(folder, "*.gguf")
+            .Where(p => !Path.GetFileName(p).Contains("mmproj", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (files.Length == 0)
+        {
+            int choice = ModernUI.Choice(this, "未找到模型文件",
+                "模型文件夹里还没有可用的 GGUF。您可以现在选择已下载的文件，或先打开下载页面。",
+                "选择已下载文件", "打开国内模型页面", "打开 Hugging Face 页面", "取消");
+            if (choice == 0) await PickFile();
+            else if (choice == 1) Open(ModelStore.Domestic.Page);
+            else if (choice == 2) Open(ModelStore.HuggingFace.Page);
+            return;
+        }
+        if (files.Length == 1)
+        {
+            var name = Path.GetFileName(files[0]);
+            int choice = ModernUI.Choice(this, "使用此模型？",
+                "将检查并安装：\n" + name + "\n\n若这不是您要的文件，请改选其他模型。",
+                "使用此文件", "选择其他文件", "取消");
+            if (choice == 0) await Import(files[0]);
+            else if (choice == 1) await PickFile();
+            return;
+        }
+        int pick = ModernUI.Choice(this, "发现多个模型文件",
+            "模型文件夹中有 " + files.Length + " 个 GGUF，请选择要使用的文件。",
+            "选择文件", "取消");
+        if (pick == 0) await PickFile();
     }
 }

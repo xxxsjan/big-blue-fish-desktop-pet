@@ -1,17 +1,30 @@
 ﻿param([Parameter(Mandatory=$true)][string]$Destination,[string]$SourceDirectory)
 $ErrorActionPreference='Stop'
 if(!$SourceDirectory){
-    $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-    if(Test-Path -LiteralPath $vswhere){
-        $installation=& $vswhere -latest -products '*' -property installationPath
-        if($installation){
-            $redist=Join-Path $installation 'VC/Redist/MSVC'
-            $version=Get-ChildItem -LiteralPath $redist -Directory | Where-Object {$_.Name -match '^\d+\.\d+\.\d+$'} | Sort-Object { [Version]$_.Name } -Descending | Select-Object -First 1
-            if($version){ $SourceDirectory=(Get-ChildItem -LiteralPath (Join-Path $version.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1).FullName }
+    $programFilesX86=[Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    if($programFilesX86){
+        $vswhere=Join-Path $programFilesX86 'Microsoft Visual Studio/Installer/vswhere.exe'
+        if(Test-Path -LiteralPath $vswhere){
+            $installation=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest -property installationPath
+            if(!$installation){ $installation=& $vswhere -latest -products '*' -property installationPath }
+            if($installation){
+                $redist=Join-Path $installation 'VC/Redist/MSVC'
+                if(Test-Path -LiteralPath $redist){
+                    $version=Get-ChildItem -LiteralPath $redist -Directory | Where-Object {$_.Name -match '^\d+\.\d+\.\d+$'} | Sort-Object { [Version]$_.Name } -Descending | Select-Object -First 1
+                    if($version){
+                        $crt=Get-ChildItem -LiteralPath (Join-Path $version.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' -ErrorAction SilentlyContinue | Select-Object -First 1
+                        if($crt){ $SourceDirectory=$crt.FullName }
+                    }
+                }
+            }
         }
     }
+    if(!$SourceDirectory){
+        $system32=Join-Path $env:SystemRoot 'System32'
+        if(Test-Path -LiteralPath (Join-Path $system32 'vcruntime140.dll')){ $SourceDirectory=$system32 }
+    }
 }
-if(!$SourceDirectory){throw '请通过 -VisualCppDirectory 提供 Microsoft Visual C++ x64 可再发行 CRT 文件夹。'}
+if(!$SourceDirectory){throw '请通过 -VisualCppDirectory 提供 Microsoft Visual C++ x64 可再发行 CRT 文件夹，或安装“适用于最新 v14 可再发行组件的 MSVC”。'}
 $names=@('concrt140.dll','msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','msvcp140_atomic_wait.dll',
     'msvcp140_codecvt_ids.dll','vccorlib140.dll','vcruntime140.dll','vcruntime140_1.dll')
 if(Test-Path -LiteralPath (Join-Path $SourceDirectory 'vcruntime140_threads.dll')){$names+='vcruntime140_threads.dll'}

@@ -122,6 +122,8 @@ internal sealed class InstallerForm : ModernWindow
                 if (!model.Completed) ModelStore.Save(ApplicationData.DirectoryFor(target), new ModelStore.Selection("none", null, null));
             }
             status.Text = "安装完成，正在启动蓝色大肥鱼…"; progress.Value = 100;
+            // 先显示完成状态再关窗口，避免模型步骤结束后安装器瞬间消失，像“页面没了”。
+            await Task.Delay(400);
             if (!applicationStarted) Launch(target);
             working = false; Close();
         }

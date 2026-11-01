@@ -174,9 +174,11 @@ public static class CompanionEdgeLayout
                 ShowActivated = false,
                 ShowInTaskbar = false,
                 Topmost = true,
-                Owner = pet,
                 Content = bubble
             };
+            // Owner requires the pet HWND; only set after the main window has loaded.
+            if (pet.IsLoaded)
+                popup.Owner = pet;
             popup.SourceInitialized += (object? s, EventArgs e) =>
             {
                 ApplyPopupStyle();
@@ -317,7 +319,9 @@ public static class CompanionEdgeLayout
 
         public void Update()
         {
-            if (updating || closed)
+            // Refresh runs during MainWindow construction (bubble scale). WPF forbids
+            // setting Owner to a window that has not been shown yet, so wait for Loaded.
+            if (updating || closed || !pet.IsLoaded)
                 return;
             SyncHost();
             if (embedded)

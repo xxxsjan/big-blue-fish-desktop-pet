@@ -16,7 +16,7 @@ internal sealed class CompanionPreferences
     /// 0 = normal transparent pet; 1 = keep transparency but expose a normal top-level window for OBS WGC.
     /// Older builds used 1 = chroma and 2 = transparent; both non-zero values migrate to transparent.
     /// </summary>
-    public int LiveCaptureMode { get; set; }
+    public int LiveCaptureMode { get; set; } = LiveCaptureTransparent;
     /// <summary>Legacy: old chroma/capture toggle. Migrated into LiveCaptureMode on read.</summary>
     public bool LiveCaptureCompatible { get; set; }
     internal const int LiveCaptureOff = 0;
