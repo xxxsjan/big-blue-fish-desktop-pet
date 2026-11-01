@@ -1,6 +1,6 @@
 ﻿# 蓝色大肥鱼 · 本机 HTTP API
 
-给弹幕机、桌面端等本地程序调用。桌宠启动后自动在本机开启，**不依赖「连接 Agent」**，也不需要额外开关。
+给弹幕机、桌面端等本地程序调用。桌宠启动后自动在本机开启，大多数接口**不依赖「连接 Agent」**，也不需要额外开关；仅 `POST /agent` 要求已连接 Agent。
 
 ## 基本信息
 
@@ -441,6 +441,65 @@ async function chatStream(text, user) {
 
 ---
 
+## POST `/agent`
+
+把文字**投递给已连接的 Agent**（CLI Agent / Harness），与双击鱼鱼弹出的输入框走的是同一个 Agent 队列，行为一致。
+
+适合：弹幕 → 交给 Agent 干活（读文件、调工具、组织长回复等）。
+
+### 请求
+
+```http
+POST http://127.0.0.1:19265/agent
+Content-Type: application/json
+
+{
+  "text": "帮我看看这个错误",
+  "user": "观众昵称"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `text` | string | 是 | 1–4000 个字符，不能全空白 |
+| `user` | string | 否 | 发送者昵称；超过 64 字符会截断 |
+
+### 成功响应 `200`
+
+```json
+{
+  "ok": true,
+  "routed": "agent",
+  "text": "帮我看看这个错误",
+  "user": "观众昵称",
+  "accepted": true,
+  "note": "已投递给 Agent；回复异步返回。"
+}
+```
+
+**本接口是异步投递**：响应只表示 Agent 已接受消息，**不含回复正文**。Agent 的回复随后经宠物气泡逐句显示；要在你的程序里拿到回复，请注册 **Speech Webhook**（回复以 `source: "speech"` 等推送），或查看 Agent 自身工作区。
+
+### 错误
+
+| 状态码 | 情况 |
+| --- | --- |
+| `400` | `text` 无效或 JSON 无效 |
+| `503` | Agent 未启用、尚未连接，或消息未被接受（`error` 含原因文案） |
+| `500` | 其他内部错误 |
+
+`503` 示例：
+
+```json
+{
+  "ok": false,
+  "error": "Agent 尚未连接。"
+}
+```
+
+与 `/chat` 的区别：`/chat` **同步等待**本地模型生成并直接返回 `reply`；`/agent` 交给 Agent 处理、**立即返回**，回复异步经气泡/webhook 出来，可能分多句。
+
+---
+
 ## 弹幕机对接建议
 
 1. 启动桌宠后，先 `GET /health`；`ok === true` 再发业务请求。
@@ -448,8 +507,9 @@ async function chatStream(text, user) {
 3. 若要同步动作切换，另起接收服务后 `POST /webhook/action` 注册回调（与吐字分开）。
 4. **只播弹幕原文** → `POST /say`；要边吐字边收 → `POST /say/stream`。
 5. **本地模型回一句** → `POST /chat`；要边生成边收 → `POST /chat/stream`。
-6. 弹幕很密时建议限流或排队；新的 `/say`、`/chat` 及其 stream 会取消当前本地生成。
-7. 仅本机可访问，弹幕客户端与桌宠需在同一台电脑。
+6. **交给 Agent 处理** → `POST /agent`（需已连接 Agent；回复异步经 Speech webhook 返回）。
+7. 弹幕很密时建议限流或排队；新的 `/say`、`/chat` 及其 stream 会取消当前本地生成。
+8. 仅本机可访问，弹幕客户端与桌宠需在同一台电脑。
 
 ### Node.js 示例
 
@@ -497,6 +557,16 @@ async function chat(text, user) {
   return res.json();
 }
 
+// 投递给 Agent（需已连接 Agent；回复经 Speech webhook 异步返回）
+async function toAgent(text, user) {
+  const res = await fetch(`${BASE}/agent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, user }),
+  });
+  return res.json();
+}
+
 await setWebhook('http://127.0.0.1:3000/big-blue-speech');
 await setActionWebhook('http://127.0.0.1:3000/big-blue-action');
 await chat(danmakuText, nick);
@@ -522,10 +592,16 @@ curl -X POST http://127.0.0.1:19265/say ^
 curl -X POST http://127.0.0.1:19265/chat ^
   -H "Content-Type: application/json" ^
   -d "{\"text\":\"鱼鱼你好\",\"user\":\"小明\"}"
+
+curl -X POST http://127.0.0.1:19265/agent ^
+  -H "Content-Type: application/json" ^
+  -d "{\"text\":\"帮我看看这个错误\",\"user\":\"小明\"}"
 ```
 
 ---
 
 ## 与「连接 Agent」的关系
 
-本 API 与设置里的 CLI Agent / DeepSeek Harness **无关**。关闭 Agent 也可使用。`/chat` 只走桌宠内置本地模型，不会把弹幕发给云端 Agent。
+`/health`、`/webhook` 系列、`/say` 系列、`/chat` 系列与设置里的 CLI Agent / DeepSeek Harness **无关**，关闭 Agent 也可使用。`/chat` 只走桌宠内置本地模型，不会把弹幕发给云端 Agent。
+
+仅 `POST /agent` 需要已连接 Agent：它把文字投递进 Agent 的对话队列（与双击鱼鱼弹出的输入框同一入口），Agent 未启用或未连接时返回 `503`。

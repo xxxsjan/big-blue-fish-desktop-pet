@@ -383,4 +383,19 @@ public partial class MainWindow
         Follow(); window.Activate(); return true;
     }
 #endif
+
+    // HTTP /agent 端点：把用户文本投递给已连接的 Agent（异步投递，不等待回复）。
+    private bool TrySendAgentUser(string text, out string detail)
+    {
+#if COMPANION_SAFE
+        detail = "此构建未包含 Agent 功能。";
+        return false;
+#else
+        if (!McpInputAvailable) { detail = "Agent 未启用。"; return false; }
+        if (agent?.Connected != true) { detail = agent?.Detail ?? "Agent 尚未连接。"; return false; }
+        if (!agent.SendUser(text)) { detail = agent?.Detail ?? "Agent 消息未被接受。"; return false; }
+        detail = agent?.Detail ?? "";
+        return true;
+#endif
+    }
 }

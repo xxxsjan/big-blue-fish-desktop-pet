@@ -18,7 +18,7 @@ public partial class MainWindow
     private static readonly HttpClient CompanionWebhookClient = new() { Timeout = TimeSpan.FromSeconds(5) };
     private HttpListener? httpApi;
     private CancellationTokenSource? httpApiCancel;
-    private const string HttpApiRoutes = "GET /health、GET/POST /webhook、GET/POST /webhook/action、POST /say、POST /say/stream、POST /chat、POST /chat/stream";
+    private const string HttpApiRoutes = "GET /health、GET/POST /webhook、GET/POST /webhook/action、POST /say、POST /say/stream、POST /chat、POST /chat/stream、POST /agent";
 
     private void StartHttpApi()
     {
@@ -196,6 +196,28 @@ public partial class MainWindow
                     : null;
                 if (user != null && user.Length > 64) user = user[..64];
                 await WriteChatStream(response, text, user);
+                return;
+            }
+
+            if (path == "/agent")
+            {
+                var text = ReadHttpText(root, "text", 4000);
+                var user = root.TryGetProperty("user", out var userNode) && userNode.ValueKind == JsonValueKind.String
+                    ? userNode.GetString()
+                    : null;
+                if (user != null && user.Length > 64) user = user[..64];
+                var (accepted, detail) = await Dispatcher.InvokeAsync(() =>
+                {
+                    var ok = TrySendAgentUser(text, out var why);
+                    return (ok, why);
+                }).Task;
+                if (!accepted)
+                {
+                    await WriteHttpJson(response, 503, new { ok = false, error = string.IsNullOrEmpty(detail) ? "Agent 不可用。" : detail });
+                    return;
+                }
+                // Agent 为异步多气泡回复，此处仅确认已投递，回复随后经宠物气泡 / Speech webhook 返回。
+                await WriteHttpJson(response, 200, new { ok = true, routed = "agent", text, user, accepted = true, note = "已投递给 Agent；回复异步返回。" });
                 return;
             }
 
