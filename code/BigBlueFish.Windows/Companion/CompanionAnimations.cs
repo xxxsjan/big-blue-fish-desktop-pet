@@ -66,7 +66,11 @@ public partial class MainWindow
         };
         videoPlayer.FramePresented += MoveWithAnimation;
         companionReady = true;
-        if (PuppetActive) PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle");
+        if (PuppetActive)
+        {
+            nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
+            PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle");
+        }
         else { PlayAnimation(animationPolicy.Find("女仆屈膝礼仪"), "Startup"); ShowGreetingNotice(WelcomeText(DateTime.Now)); }
         File.WriteAllText("ready.status", "ready");
     }
@@ -79,8 +83,12 @@ public partial class MainWindow
         if (phase is not ("Startup" or "Exit")) EndGreetingNotice();
         currentAction = rule.Id; animationPhase = phase;
 #if !COMPANION_SAFE
-        _agentLastActionAt = DateTime.UtcNow;
-        if (phase == "Event") { _agentRecentActions.Enqueue(rule.Id); while (_agentRecentActions.Count > 8) _agentRecentActions.Dequeue(); }
+        if (phase is not ("PuppetIdle" or "Idle" or "BetweenMoves"))
+            _agentLastActionAt = DateTime.UtcNow;
+        if (phase is "Event" or "External" or "Outbound")
+        { _agentRecentActions.Enqueue(rule.Id); while (_agentRecentActions.Count > 8) _agentRecentActions.Dequeue(); }
+        if (phase == "External")
+            nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
 #endif
         bool suspendedDrag = phase == "Drag";
         videoPlayer!.Play(Path.Combine(AnimationDirectory, rule.File), mirror, AnimationFinished,
@@ -98,7 +106,6 @@ public partial class MainWindow
         if (companionClosed) return;
         if (exitAnimation) { exitReady = true; base.Close(); return; }
         if (!dragging && !hiddenByUser && !fullscreenHidden && PlayQueuedMcpAction()) return;
-        if (PuppetActive) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; }
         if (animationPhase == "Drag") return; // Hold the final suspended pose until mouse release.
         if (animationPhase == "Outbound" && movementRule != null)
         {
@@ -118,11 +125,26 @@ public partial class MainWindow
             EndGreetingNotice();
             nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
         }
+        if (PuppetActive) { PuppetAnimationBoundary(); return; }
         AnimationBoundary();
+    }
+    private void PuppetAnimationBoundary()
+    {
+        if (exitAnimation || dragging || hiddenByUser || fullscreenHidden || companionSettings != null)
+        {
+            PlayIdle();
+            return;
+        }
+        if (DateTime.UtcNow >= nextAction)
+        {
+            nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
+            StartAnimationEvent(animationPolicy.Choose("Event", AnimationContext(), companionRandom));
+            return;
+        }
+        PlayIdle();
     }
     private void AnimationBoundary()
     {
-        if (PuppetActive) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; }
         if (exitAnimation || dragging || hiddenByUser || fullscreenHidden || companionSettings != null) { PlayIdle(); return; }
         var local = DateTime.Now;
         var date = local.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);

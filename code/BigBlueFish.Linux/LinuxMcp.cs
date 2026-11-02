@@ -64,8 +64,10 @@ internal sealed partial class LinuxPetWindow
         if (Preferences.PuppetMode == enabled) return;
         Preferences.PuppetMode = enabled; speechVersion++; if (AgentDailyActive) brain.Stop(); else brain.CancelGeneration(); loading.IsVisible = false; moveRule = null;
         if (!externalSpeech) { typing = false; bubbleWindow.Hide(); }
-        ConfigureAgent(); Idle();
-        if (!enabled) { nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random)); nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds); nextWarmup = DateTime.MinValue; }
+        ConfigureAgent();
+        nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds);
+        Idle();
+        if (!enabled) { nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random)); nextWarmup = DateTime.MinValue; }
     }
     async Task RequestAgentLocalSpeech(CancellationToken token)
     {

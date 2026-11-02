@@ -106,7 +106,11 @@ public partial class MainWindow
         InvalidateSpeechRequests(AgentDailyActive); EndGreetingNotice();
         if (!externalBubble) { speech.Cancel(); bubble.Visibility = Visibility.Collapsed; }
         CancelMovement(); ConfigureAgent(); RefreshMcpMenuAvailability();
-        if (enabled && companionReady) PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle");
+        if (enabled && companionReady)
+        {
+            nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
+            PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle");
+        }
         if (!enabled)
         {
             nextSpeech = DateTime.UtcNow.Add(preferences.NextSpeechDelay(companionRandom));

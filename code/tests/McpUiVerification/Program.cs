@@ -395,6 +395,10 @@ internal static class Program
                 long frames = (long)Read("videoPlayer").GetType().GetProperty("Frames", Access)!.GetValue(Read("videoPlayer"))!;
                 Wait(() => (long)Read("videoPlayer").GetType().GetProperty("Frames", Access)!.GetValue(Read("videoPlayer"))! < frames, 13, "Puppet idle loops at full clip boundary");
                 Check((string)Read("currentAction") == "待机呼吸休闲", "Loop never chooses another idle or event");
+                Field("nextAction", DateTime.UtcNow.AddSeconds(-1));
+                Wait(() => (string)Read("currentAction") != "待机呼吸休闲", 14, "Puppet host Event starts after interval");
+                Check((string)Read("animationPhase") is "Event" or "Outbound", "Puppet host fallback uses Event pool");
+                Wait(() => (string)Read("currentAction") == "待机呼吸休闲", 30, "Puppet returns to fixed idle after host Event");
                 Invoke("PublishMcpInteraction", "click", new { button = "left" });
                 Invoke("PublishMcpInteraction", "drag_start", new { Left = pet.Left });
                 Invoke("PublishMcpInteraction", "drag_end", new { Left = pet.Left });

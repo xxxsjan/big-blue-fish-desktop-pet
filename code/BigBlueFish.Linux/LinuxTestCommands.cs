@@ -32,6 +32,7 @@ internal sealed partial class LinuxPetWindow
                     File.WriteAllText("ocr-status.json", JsonSerializer.Serialize(ocr)); break;
                 case "render": RenderControl(this, "pet.png"); break;
                 case "render-settings": if (settings != null) RenderControl(settings, "settings.png"); break;
+                case "due-event": nextEvent = DateTime.UtcNow.AddSeconds(-1); break;
 #if !COMPANION_SAFE
                 case "render-input": if (mcpInput != null) RenderControl(mcpInput, "input.png"); break;
 #endif

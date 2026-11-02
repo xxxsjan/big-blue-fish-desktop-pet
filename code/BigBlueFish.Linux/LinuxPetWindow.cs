@@ -71,7 +71,11 @@ internal sealed partial class LinuxPetWindow : Window
         var screen = Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1280, 720);
         Position = new((int)(Preferences.Left ?? screen.Right - Width * DesktopScaling), (int)(Preferences.Top ?? screen.Bottom - Height * DesktopScaling)); Clamp();
         Opened += async (_, _) => {
-            if (Puppet) Play(policy.Find("待机呼吸休闲"), "PuppetIdle");
+            if (Puppet)
+            {
+                nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds);
+                Play(policy.Find("待机呼吸休闲"), "PuppetIdle");
+            }
             else { Play(policy.Find("女仆屈膝礼仪"), "Startup"); Welcome(); }
             InitializeMcp(); InitializeTray(); timer.Start();
             if (!File.Exists("model-selection.json") && !brain.ModelAvailable && !App.Args.Contains("--test-mode")) await InstallModel();
@@ -139,6 +143,7 @@ internal sealed partial class LinuxPetWindow : Window
         if (closed) return;
         if (phase == "Startup" && nextPhase != "Startup") EndWelcome();
         currentAction = rule.Id; phase = nextPhase;
+        if (nextPhase == "External") nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds);
         player.Play(Path.Combine(AppContext.BaseDirectory, "assets/fish", rule.File), mirror, Finished,
             nextPhase == "Drag" ? 1.5 : 0, nextPhase == "Drag" ? 6 : null, rule.Pool == "Greeting" ? 1.5 : 1);
     }
@@ -149,16 +154,27 @@ internal sealed partial class LinuxPetWindow : Window
         if (closed) return;
         if (phase == "Exit") { CloseImmediately(); return; }
         if (!dragging && !hidden && !fullscreenHidden && PlayQueued()) return;
-        if (Puppet) { Idle(); return; }
         if (phase == "Drag") return;
         if (phase == "Outbound" && moveRule != null) { Position = new((int)moveEnd, Position.Y); Play(policy.Choose("Idle", Context(), random), "BetweenMoves"); return; }
         if (phase == "BetweenMoves" && moveRule != null) { moveStart = Position.X; moveEnd = moveOrigin.X; Play(moveRule, "Return", !moveMirrored); return; }
         if (phase == "Return") { Position = new(moveOrigin.X, Position.Y); moveRule = null; }
         if (phase == "Startup") { EndWelcome(); nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds); }
+        if (Puppet) { PuppetBoundary(); return; }
         if (dragging || hidden || fullscreenHidden || settings != null) { Idle(); return; }
         var now = DateTime.Now;
         if (now.Hour == 23 && Preferences.LastBrushDate != now.ToString("yyyy-MM-dd")) { Preferences.LastBrushDate = now.ToString("yyyy-MM-dd"); Save(); Play(policy.Find("晨间刷牙"), "Daily"); return; }
         if (DateTime.UtcNow >= nextEvent) { nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds); Event(policy.Choose("Event", Context(), random)); } else Idle();
+    }
+    void PuppetBoundary()
+    {
+        if (dragging || hidden || fullscreenHidden || settings != null) { Idle(); return; }
+        if (DateTime.UtcNow >= nextEvent)
+        {
+            nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds);
+            Event(policy.Choose("Event", Context(), random));
+            return;
+        }
+        Idle();
     }
     void Event(CompanionAnimationRule rule)
     {

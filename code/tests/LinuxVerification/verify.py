@@ -91,6 +91,11 @@ try:
     kinds=[e.get('params',{}).get('data',{}).get('kind') for e in events]
     check(all(k in kinds for k in ['click','drag_start','drag_end']),'real pointer click and drag pushed automatically')
     check(state()['currentAction']=='待机呼吸休闲','pointer gestures do not switch puppet animation')
+    command('due-event')
+    wait(lambda: state()['currentAction']!='待机呼吸休闲',16)
+    check(state()['phase'] in ('Event','Outbound'),'puppet host Event starts after interval')
+    wait(lambda: state()['phase']=='PuppetIdle',30)
+    check(state()['currentAction']=='待机呼吸休闲','puppet returns to fixed idle after host Event')
     content('update_settings',settings={'McpChatEnabled':True})
     location=state(); x,y=location['X']+250,location['Y']+130
     subprocess.run(['xdotool','mousemove',str(x),str(y),'click','--repeat','2','--delay','120','1'],check=True,env=env)
