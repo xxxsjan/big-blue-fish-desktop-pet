@@ -120,8 +120,8 @@ public partial class MainWindow
     {
         if (agent == null) return;
         var skills = agent.Skills; skills.Install();
-        var dialog = new ModernWindow("鱼鱼人设", "鱼鱼人设", "仅一份默认人设「" + AgentSkillStore.DefaultPersonaName + "」。保存后在 Agent 下一轮消息中生效。", 760, 640) { Owner = owner };
-        var editor = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 360, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Text = skills.ReadPersona() };
+        var dialog = new ModernWindow("鱼鱼人设", "鱼鱼人设", "仅一份默认人设「" + AgentSkillStore.DefaultPersonaName + "」。保存后在 Agent 下一轮消息中生效。", 760, 560) { Owner = owner };
+        var editor = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 220, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Text = skills.ReadPersona() };
         var status = ModernUI.Text("保存会立刻写入当前生效的 persona.md。");
         dialog.Body.Children.Add(ModernUI.Text("内容"));
         dialog.Body.Children.Add(editor);

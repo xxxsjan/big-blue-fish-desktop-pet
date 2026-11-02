@@ -83,7 +83,7 @@ internal sealed partial class LinuxPetWindow
         var skills = agent.Skills; skills.Install();
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(Paragraph("仅一份默认人设「" + AgentSkillStore.DefaultPersonaName + "」。保存后在下一轮消息中生效。"));
-        var editor = new TextBox { AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Height = 320, Text = skills.ReadPersona() };
+        var editor = new TextBox { AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Height = 220, Text = skills.ReadPersona() };
         var status = Paragraph("保存会立刻写入当前生效的 persona.md。");
         content.Children.Add(new TextBlock { Text = "内容" }); content.Children.Add(editor);
         content.Children.Add(status);
@@ -106,7 +106,7 @@ internal sealed partial class LinuxPetWindow
             catch (Exception error) { _ = Confirm("恢复默认人设失败", error.Message, "知道了"); }
         }));
         content.Children.Add(row);
-        Dialog("鱼鱼人设", content, 760, 580).Show(settings!);
+        Dialog("鱼鱼人设", content, 760, 520).Show(settings!);
     }
 
     async Task<string?> RequestAgentPermission(AgentPermission request, CancellationToken token)
