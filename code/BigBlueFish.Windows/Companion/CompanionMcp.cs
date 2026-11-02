@@ -77,6 +77,18 @@ public partial class MainWindow
             App.Args.Contains("--test-mode") ? Path.Combine(Environment.CurrentDirectory, "agent-test-workspace") : null);
         if (!HarnessCatalog.All.Any(x => x.Id == preferences.AgentHarnessId)) preferences.AgentHarnessId = "codex";
         agent.LocalSpeechRequested = token => Dispatcher.InvokeAsync(() => RequestAgentLocalSpeech(token)).Task.Unwrap();
+        agent.WakeupAugment = () =>
+        {
+            var now = DateTime.UtcNow;
+            var foreground = CompanionNative.ForegroundContext(CompanionNative.GetForegroundWindow());
+            return new
+            {
+                secondsSinceLastAction = Math.Max(0, (int)(now - _agentLastActionAt).TotalSeconds),
+                secondsSinceLastSpeech = Math.Max(0, (int)(now - _agentLastSpeechAt).TotalSeconds),
+                recentActions = _agentRecentActions.Reverse().ToArray(),
+                foreground
+            };
+        };
         ConfigureAgent();
         if (AgentDailyActive) brain.Stop();
     }
@@ -210,6 +222,9 @@ public partial class MainWindow
                 case "say": case "say_next":
                     var text = ControlTools.RequiredText(args, "text");
                     agent?.MarkSpoken();
+#if !COMPANION_SAFE
+                    _agentLastSpeechAt = DateTime.UtcNow;
+#endif
                     if (name == "say") ShowMcpSpeech(text); else mcpNextSpeech = text;
                     return ControlTools.Text(new { displayed = name == "say", pending = name == "say_next", text });
                 case "get_operation_guide": case "get_wakeups": case "schedule_wakeup": case "cancel_wakeup":

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -18,6 +19,11 @@ public partial class MainWindow
     private bool movementMirrored;
     private bool exitAnimation, exitReady;
     private bool greetingNoticeActive;
+#if !COMPANION_SAFE
+    private DateTime _agentLastActionAt = DateTime.UtcNow;
+    private DateTime _agentLastSpeechAt = DateTime.UtcNow;
+    private readonly Queue<string> _agentRecentActions = new();
+#endif
     private static string WelcomeText(DateTime now)
     {
         string period = now.Hour switch { >= 5 and < 11 => "早上", >= 11 and < 14 => "中午", >= 14 and < 18 => "下午", _ => "晚上" };
@@ -72,6 +78,10 @@ public partial class MainWindow
         if (!companionReady || companionClosed) return;
         if (phase is not ("Startup" or "Exit")) EndGreetingNotice();
         currentAction = rule.Id; animationPhase = phase;
+#if !COMPANION_SAFE
+        _agentLastActionAt = DateTime.UtcNow;
+        if (phase == "Event") { _agentRecentActions.Enqueue(rule.Id); while (_agentRecentActions.Count > 8) _agentRecentActions.Dequeue(); }
+#endif
         bool suspendedDrag = phase == "Drag";
         videoPlayer!.Play(Path.Combine(AnimationDirectory, rule.File), mirror, AnimationFinished,
             startSeconds: suspendedDrag ? 1.5 : 0, endSeconds: suspendedDrag ? 6 : null,
@@ -88,13 +98,7 @@ public partial class MainWindow
         if (companionClosed) return;
         if (exitAnimation) { exitReady = true; base.Close(); return; }
         if (!dragging && !hiddenByUser && !fullscreenHidden && PlayQueuedMcpAction()) return;
-        // Puppet 模式：Agent 正在处理事件 → 锁回待机（别打断 Agent 的工具调用节奏）。
-        // Agent 空闲 → 让鱼鱼自己轮换 Event 动作，不必等下一个 wakeup 事件。
-#if !COMPANION_SAFE
-        if (PuppetActive && agent?.Busy == true) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; }
-#else
         if (PuppetActive) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; }
-#endif
         if (animationPhase == "Drag") return; // Hold the final suspended pose until mouse release.
         if (animationPhase == "Outbound" && movementRule != null)
         {
@@ -118,12 +122,7 @@ public partial class MainWindow
     }
     private void AnimationBoundary()
     {
-        // Puppet 模式：Agent 正在忙 → 锁回待机；Agent 空闲 → 让鱼鱼按设定间隔自己动。
-#if !COMPANION_SAFE
-        if (PuppetActive) { if (agent?.Busy == true) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; } }
-#else
         if (PuppetActive) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; }
-#endif
         if (exitAnimation || dragging || hiddenByUser || fullscreenHidden || companionSettings != null) { PlayIdle(); return; }
         var local = DateTime.Now;
         var date = local.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);

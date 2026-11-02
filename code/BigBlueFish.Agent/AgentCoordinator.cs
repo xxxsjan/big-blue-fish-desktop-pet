@@ -26,6 +26,7 @@ public sealed class AgentCoordinator : IDisposable
     private string harnessId = "codex", status = "尚未连接", detail = "", sessionId = "", activeKind = "";
     private bool initialCare;
     private DateTimeOffset retryAfter;
+    private DateTimeOffset _nextIdleCheckAt;
     private string? guideFingerprint;
     private int disposed;
     private long epoch;
@@ -56,6 +57,8 @@ public sealed class AgentCoordinator : IDisposable
     public event Action? Changed;
     public event Action<string, JsonElement>? ProtocolEvent;
     public Func<CancellationToken, Task>? LocalSpeechRequested { get; set; }
+    /// <summary>可选：宿主注入的 wakeup 增强函数，在构建 wakeup payload 时调用，返回的对象会合并进 wakeup 事件内容。</summary>
+    public Func<object>? WakeupAugment { get; set; }
     public AgentSkillStore Skills => new(root, HarnessCatalog.Get(harnessId), Workspaces.Current);
 
     public AgentCoordinator(string root, string bridge, string pipe, Func<AgentPermission, CancellationToken, Task<string?>> permission, string? defaultWorkspace = null)
@@ -81,6 +84,7 @@ public sealed class AgentCoordinator : IDisposable
         harnessId = selected; mode = updated;
         if (!updated.Enabled || !updated.Puppet) initialCare = false;
         if (startsCare) initialCare = true;
+        if (updated.Enabled && updated.Puppet) _nextIdleCheckAt = DateTimeOffset.Now;
         if (!updated.Enabled || !updated.DailyCare && activeKind is "daily_care" or "speech_test" or "weather_request" || !updated.Puppet && activeKind is "wakeup" or "start_care") activeTurn?.Cancel();
         if (!updated.Enabled) { Report("连接已关闭"); return; }
         if (reconnect && !changingWorkspace) Enqueue("connect", new { });
@@ -153,12 +157,20 @@ public sealed class AgentCoordinator : IDisposable
         if (!mode.Puppet || !Connected) return;
         var due = Wakeups.PeekDue(harnessId, sessionId, now);
         if (due.Length > 0) Enqueue("wakeup", new { });
+        // 心跳：每 40 秒给 Puppet Agent 发一次 idle_check，让它自己决定鱼鱼要不要动。
+        if (now >= _nextIdleCheckAt)
+        {
+            _nextIdleCheckAt = now.AddSeconds(40);
+            object augment = WakeupAugment?.Invoke() ?? new { };
+            Report("空闲检查", "Puppet=" + mode.Puppet + " Connected=" + Connected + " Augment=" + System.Text.Json.JsonSerializer.Serialize(augment));
+            Enqueue("idle_check", augment);
+        }
     }
     private bool Enqueue(string kind, object data, bool fresh = false, TaskCompletionSource<bool>? completion = null)
     {
         lock (gate)
         {
-            bool combine = kind is "connect" or "reconnect" or "new_conversation" or "daily_care" or "wakeup" or "start_care";
+            bool combine = kind is "connect" or "reconnect" or "new_conversation" or "daily_care" or "wakeup" or "start_care" or "idle_check";
             if (combine && !coalesced.Add(kind)) return true;
             if (events.Writer.TryWrite(new(kind, data, fresh, Interlocked.Read(ref epoch), completion))) return true;
             if (combine) coalesced.Remove(kind);
@@ -176,7 +188,7 @@ public sealed class AgentCoordinator : IDisposable
                 if (!mode.Enabled || changingWorkspace || request.Epoch != Interlocked.Read(ref epoch)) { request.Completion?.TrySetCanceled(); continue; }
                 if (request.Kind is "speech_test" or "weather_request" && !mode.DailyCare
                     || request.Kind is "daily_care" && (!mode.DailyCare || mode.Puppet)
-                    || request.Kind is "wakeup" or "start_care" && !mode.Puppet) continue;
+                    || request.Kind is "wakeup" or "start_care" or "idle_check" && !mode.Puppet) continue;
                 using var turn = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, connectionLifetime.Token);
                 activeTurn = turn; activeKind = request.Kind;
                 try
@@ -204,7 +216,9 @@ public sealed class AgentCoordinator : IDisposable
                     {
                         var due = Wakeups.PeekDue(harnessId, sessionId, DateTimeOffset.Now);
                         if (due.Length == 0) continue;
-                        payload = new { reservations = due.Select(x => new { x.Id, x.Purpose, x.Due }).ToArray() };
+                        var reservations = due.Select(x => new { x.Id, x.Purpose, x.Due }).ToArray();
+                        object augment = WakeupAugment?.Invoke() ?? new { };
+                        payload = new { reservations, augment };
                         // Dispatch at most once, even if the Agent disconnects after executing say.
                         foreach (var job in due) Wakeups.Acknowledge(job, DateTimeOffset.Now);
                         if (!mode.DailyCare)
