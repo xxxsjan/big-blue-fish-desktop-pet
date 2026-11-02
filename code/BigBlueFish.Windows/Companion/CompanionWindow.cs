@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -307,17 +308,19 @@ public partial class MainWindow
         if (h == IntPtr.Zero)
             return;
         // WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x80.
-        // Capture mode drops TOOLWINDOW and shows a taskbar entry so OBS can list the window.
         long style = CompanionNative.GetStyle(h, -20).ToInt64();
         if (LiveCaptureListed)
         {
+            // Window/capture mode: drop TOOLWINDOW and show a taskbar entry so OBS can enumerate the window.
             ShowInTaskbar = true;
             Title = "蓝色大肥鱼";
             style = (style | 0x08000000L) & ~0x80L;
         }
         else
         {
+            // Non-window mode: match upstream Bai-Cute pet chrome exactly.
             ShowInTaskbar = false;
+            Title = "蓝色大肥鱼";
             style |= 0x08000000L | 0x80L;
         }
 
@@ -330,6 +333,34 @@ public partial class MainWindow
         preferences.LiveCaptureMode = Math.Clamp(mode, CompanionPreferences.LiveCaptureOff, CompanionPreferences.LiveCaptureTransparent);
         preferences.LiveCaptureCompatible = preferences.LiveCaptureMode == CompanionPreferences.LiveCaptureTransparent;
         ApplyLiveCaptureWindowStyle();
+    }
+
+    /// <summary>Save preferences, release the single-instance lock via normal shutdown, then relaunch.</summary>
+    private void RestartCompanionApplication()
+    {
+        SaveCompanion();
+        string path = Environment.ProcessPath
+            ?? Path.Combine(AppContext.BaseDirectory, "BigBlueFish.exe");
+        var start = new ProcessStartInfo(path)
+        {
+            UseShellExecute = true,
+            WorkingDirectory = Environment.CurrentDirectory
+        };
+        foreach (string arg in App.Args)
+            start.ArgumentList.Add(arg);
+        // Launch after Closed/ShutdownCompanion disposes the single-instance mutex.
+        Closed += (_, _) =>
+        {
+            try { Process.Start(start); }
+            catch (Exception error)
+            {
+                try { File.AppendAllText("companion-errors.log", DateTime.Now.ToString("s") + " restart failed: " + error + Environment.NewLine); }
+                catch { }
+            }
+        };
+        exitReady = true;
+        companionSettings?.Close();
+        Close();
     }
 
     private IntPtr CompanionWndProc(IntPtr hwnd, int msg, IntPtr w, IntPtr l, ref bool handled)

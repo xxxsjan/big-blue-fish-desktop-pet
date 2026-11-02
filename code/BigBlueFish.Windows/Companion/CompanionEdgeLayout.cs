@@ -148,12 +148,16 @@ public static class CompanionEdgeLayout
             EnsureCaptureFrame();
         }
 
+        // Non-capture path mirrors upstream Bai-Cute: a separate no-activate tool window for the bubble.
         private void DetachToPopup()
         {
             if (popup != null)
             {
                 embedded = false;
+                if (pet.IsLoaded && popup.Owner == null)
+                    popup.Owner = pet;
                 ApplyPopupStyle();
+                RestorePetBaseSize();
                 return;
             }
 
@@ -176,13 +180,15 @@ public static class CompanionEdgeLayout
                 Topmost = true,
                 Content = bubble
             };
-            // Owner requires the pet HWND; only set after the main window has loaded.
+            // WPF forbids Owner before the pet has been shown; attach once Loaded.
             if (pet.IsLoaded)
                 popup.Owner = pet;
             popup.SourceInitialized += (object? s, EventArgs e) =>
             {
-                ApplyPopupStyle();
-                HwndSource.FromHwnd(new WindowInteropHelper(popup).Handle)?.AddHook(NoActivate);
+                nint handle = new WindowInteropHelper(popup).Handle;
+                // 0x8000080 = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW (same as upstream).
+                SetWindowLongPtr(handle, -20, new IntPtr(((IntPtr)GetWindowLongPtr(handle, -20)).ToInt64() | 0x8000080));
+                HwndSource.FromHwnd(handle)?.AddHook(NoActivate);
             };
             popup.DpiChanged += (object s, System.Windows.DpiChangedEventArgs e) =>
             {
@@ -201,10 +207,8 @@ public static class CompanionEdgeLayout
             nint handle = new WindowInteropHelper(popup).Handle;
             if (handle == 0)
                 return;
-            long style = ((IntPtr)GetWindowLongPtr(handle, -20)).ToInt64();
-            // WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW — normal separate bubble stays a tool window.
-            style |= 0x08000000L | 0x80L;
-            SetWindowLongPtr(handle, -20, new IntPtr(style));
+            // Match upstream bubble chrome exactly.
+            SetWindowLongPtr(handle, -20, new IntPtr(((IntPtr)GetWindowLongPtr(handle, -20)).ToInt64() | 0x8000080));
         }
 
         public void ApplyCaptureMode()
@@ -359,6 +363,7 @@ public static class CompanionEdgeLayout
             }
         }
 
+        // Upstream-aligned separate bubble placement (non-capture mode).
         private void UpdatePopup()
         {
             if (popup == null)
@@ -379,7 +384,24 @@ public static class CompanionEdgeLayout
                 double scale = ((BigBlueFish.Windows.MainWindow)pet).CompanionBubbleScale;
                 Rect petBounds = PetBounds(pet);
                 // Measure in the bubble's own units; position its scaled window in desktop DIP.
-                var (bubbleWidth, bubbleHeight) = MeasureBubble(area, scale, Math.Max(1.0, area.Height - 16.0));
+                double maximumWidth = Math.Max(1.0, Math.Min(300.0, (area.Width - 16.0) / scale));
+                bubble.MaxWidth = maximumWidth;
+                measuringText.Text = ((BigBlueFish.Windows.MainWindow)pet).CompanionBubbleLayoutText;
+                measuringText.FontFamily = text.FontFamily;
+                measuringText.FontSize = text.FontSize;
+                measuringText.FontWeight = text.FontWeight;
+                measuringText.TextWrapping = text.TextWrapping;
+                measuringText.Margin = text.Margin;
+                double horizontal = bubble.Padding.Left + bubble.Padding.Right + bubble.BorderThickness.Left + bubble.BorderThickness.Right;
+                double vertical = bubble.Padding.Top + bubble.Padding.Bottom + bubble.BorderThickness.Top + bubble.BorderThickness.Bottom;
+                measuringText.Measure(new System.Windows.Size(Math.Max(1, maximumWidth - horizontal), double.PositiveInfinity));
+                double bubbleWidth = Math.Min(maximumWidth, Math.Max(26, measuringText.DesiredSize.Width) + horizontal);
+                // WPF rounds the scaled arrange width; reserve two base DIP while
+                // measuring so a wrap at that boundary cannot add an unmeasured line.
+                measuringText.Measure(new System.Windows.Size(Math.Max(1, bubbleWidth - horizontal - 2), double.PositiveInfinity));
+                double bubbleHeight = Math.Min(Math.Max(1.0, (area.Height - 16.0) / scale), Math.Max(22, measuringText.DesiredSize.Height) + vertical);
+                bubbleWidth *= scale;
+                bubbleHeight *= scale;
                 double left = Limit(pet.Left + petBounds.Left + petBounds.Width / 2.0 - bubbleWidth / 2.0, area.Left + 8.0, area.Right - bubbleWidth - 8.0);
                 double top = pet.Top + petBounds.Top - bubbleHeight - 10.0;
                 bool belowPet = false;

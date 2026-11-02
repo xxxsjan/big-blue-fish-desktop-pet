@@ -1,5 +1,7 @@
+using BigBlueFish.Deployment;
 using Microsoft.Win32;
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -147,13 +149,17 @@ public partial class MainWindow
             preferences.HideOnFullscreen = v;
             UpdateCompanionVisibility();
         });
-        Toggle("窗口模式", preferences.LiveCaptureMode == CompanionPreferences.LiveCaptureTransparent, v =>
+        Toggle("窗口模式（会重启应用）", preferences.LiveCaptureMode == CompanionPreferences.LiveCaptureTransparent, v =>
         {
-            SetLiveCaptureMode(v ? CompanionPreferences.LiveCaptureTransparent : CompanionPreferences.LiveCaptureOff);
+            int next = v ? CompanionPreferences.LiveCaptureTransparent : CompanionPreferences.LiveCaptureOff;
+            if (next == preferences.LiveCaptureMode) return;
+            preferences.LiveCaptureMode = next;
+            preferences.LiveCaptureCompatible = next == CompanionPreferences.LiveCaptureTransparent;
+            RestartCompanionApplication();
         });
         p.Children.Add(new TextBlock
         {
-            Text = "关闭为无窗口模式，开启为窗口模式（OBS可以捕获）",
+            Text = "关闭为无窗口模式（与上游桌宠一致：不进任务栏、气泡独立窗）；开启为窗口模式（OBS 可捕获）。",
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
             Margin = new Thickness(0, 0, 0, 8),
